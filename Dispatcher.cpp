@@ -77,7 +77,7 @@ cl_command_queue Dispatcher::Device::createQueue(cl_context & clContext, cl_devi
 
 cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::string s) {
 	cl_kernel ret  = clCreateKernel(clProgram, s.c_str(), NULL);
-	return ret == NULL ? throw std::runtime_error("failed to create command queue") : ret;
+	return ret == NULL ? throw std::runtime_error("failed to create kernel") : ret;
 }
 
 Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal) :
@@ -88,7 +88,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_clQueue(createQueue(clContext, clDeviceId) ),
 	m_kernelBegin( createKernel(clProgram, "profanity_begin") ),
 	m_kernelInversePre(createKernel(clProgram, "profanity_inverse_pre")),
-	m_kernelInverse(createKernel(clProgram, "profanity_inverse")),
+	m_kernelInverse(createKernel(clProgram, "profanity_inverse_multiple")),
 	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
 	m_kernelEnd(createKernel(clProgram, "profanity_end")),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
@@ -96,10 +96,10 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_memPoints2(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_SIZE, true),
 	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_SIZE, true),
 	m_memPass(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, 1, true),
-	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, 1),
+	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, 40),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
-	m_scanned(0)
+	m_speed(PROFANITY_SPEEDSAMPLES)
 {
 
 }
@@ -109,7 +109,7 @@ Dispatcher::Device::~Device() {
 }
 
 Dispatcher::Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const cl_uchar clScoreQuit)
-	: m_clContext(clContext), m_clProgram(clProgram), m_mode(mode), m_worksizeMax(worksizeMax), m_clScoreMax(mode.score), m_clScoreQuit(clScoreQuit), m_eventFinished(NULL) {
+	: m_clContext(clContext), m_clProgram(clProgram), m_mode(mode), m_worksizeMax(worksizeMax), m_clScoreMax(mode.score), m_clScoreQuit(clScoreQuit), m_eventFinished(NULL), m_countPrint(0) {
 
 }
 
@@ -143,8 +143,6 @@ void Dispatcher::run() {
 }
 
 void Dispatcher::init(Device & d) {
-	std::cout << "Initializing device..." << std::endl;
-
 	// Set mode data
 	for (auto i = 0; i < 20; ++i) {
 		d.m_memData1[i] = m_mode.data1[i];
@@ -152,7 +150,6 @@ void Dispatcher::init(Device & d) {
 	}
 
 	// Write precompute table and mode data
-	std::cout << "\tWriting data..." << std::endl;
 	d.m_memPrecomp.write(true);
 	d.m_memData1.write(true);
 	d.m_memData2.write(true);
@@ -190,9 +187,6 @@ void Dispatcher::init(Device & d) {
 
 	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 4, d.m_clScoreMax);
 	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 5, m_mode.mode);
-
-	std::cout << "\tDone. " << std::endl;
-	std::cout << std::endl;
 }
 
 void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal) {
@@ -217,12 +211,12 @@ void Dispatcher::dispatch(Device & d) {
 
 	for (auto i = 1; i < PROFANITY_PASSES + 1; ++i) {
 		enqueueKernel(d.m_clQueue, d.m_kernelInversePre, g_worksizes[i], d.m_worksizeLocal);
-		enqueueKernel(d.m_clQueue, d.m_kernelInverse, g_worksizes[i] / 3, d.m_worksizeLocal);
+		enqueueKernel(d.m_clQueue, d.m_kernelInverse, g_worksizes[i] / 255, d.m_worksizeLocal);
 		enqueueKernel(d.m_clQueue, d.m_kernelInversePost, g_worksizes[i], d.m_worksizeLocal);
 	}
 
 	enqueueKernel(d.m_clQueue, d.m_kernelEnd, g_worksizes[PROFANITY_PASSES], d.m_worksizeLocal);
-	
+
 	cl_event event;
 	d.m_memResult.read(false, &event);
 
@@ -231,20 +225,26 @@ void Dispatcher::dispatch(Device & d) {
 }
 
 void Dispatcher::handleResult(Device & d) {
-	result & r = *d.m_memResult;
-	if ( r.found > 0 && r.foundScore >= d.m_clScoreMax) {
-		d.m_clScoreMax = r.foundScore;
-		CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 4, d.m_clScoreMax);
+	//result & r = *d.m_memResult;
+	for (auto i = 40; i > 0; --i) {
+		result & r = d.m_memResult[i - 1];
 
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (r.foundScore >= m_clScoreMax) {
-			m_clScoreMax = r.foundScore;
+		if (r.found > 0 && r.foundScore >= d.m_clScoreMax) {
+			d.m_clScoreMax = r.foundScore;
+			CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 4, d.m_clScoreMax);
 
-			if (m_clScoreQuit && r.foundScore >= m_clScoreQuit) {
-				m_quit = true;
+			std::lock_guard<std::mutex> lock(m_mutex);
+			if (r.foundScore >= m_clScoreMax) {
+				m_clScoreMax = r.foundScore;
+
+				if (m_clScoreQuit && r.foundScore >= m_clScoreQuit) {
+					m_quit = true;
+				}
+
+				printResult(d.m_clSeed, r, timeStart);
 			}
 
-			printResult(d.m_clSeed, r, timeStart);
+			break;
 		}
 	}
 }
@@ -260,28 +260,6 @@ void Dispatcher::randomizeSeed(Device & d) {
 	d.m_clSeed.s[3] = distr(eng);
 }
 
-void Dispatcher::sampleAdd(std::list<Dispatcher::SpeedSample> & lSpeed, const unsigned long long & scanned) {
-	SpeedSample sample;
-	sample.scanned = scanned;
-	sample.time = std::chrono::steady_clock::now();
-
-	lSpeed.push_front(sample);
-	if (lSpeed.size() > 20) {
-		lSpeed.pop_back();
-	}
-}
-
-unsigned int Dispatcher::sampleSpeed(std::list<Dispatcher::SpeedSample> & lSpeed) {
-	if (lSpeed.size() > 1) {
-		auto deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(lSpeed.front().time - lSpeed.back().time);
-		auto deltaScanned = lSpeed.front().scanned - lSpeed.back().scanned;
-		return (1000 * deltaScanned) / deltaTime.count();
-	}
-	else {
-		return 0;
-	}
-}
-
 void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 	if (status != CL_COMPLETE) {
 		std::cout << "Dispatcher::onEvent - Got bad status: " << status << std::endl;
@@ -289,16 +267,11 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 	else {
 		handleResult(d);
 
-		// Device speed
-		d.m_scanned += PROFANITY_SIZE;
-		sampleAdd(d.m_lSpeed, d.m_scanned);
-
 		bool bDispatch = true;
 		{
 			std::lock_guard<std::mutex> lock(m_mutex);
-			m_scanned += PROFANITY_SIZE;
-			sampleAdd(m_lSpeed, m_scanned);
-			std::cout << "Speed: " << formatSpeed(sampleSpeed(m_lSpeed)) << "\r" << std::flush;
+			d.m_speed.sample(PROFANITY_SIZE);
+			printSpeed();
 
 			if( m_quit ) {
 				bDispatch = false;
@@ -314,13 +287,32 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 	}
 }
 
+// This is run when m_mutex is held.
+void Dispatcher::printSpeed() {
+	++m_countPrint;
+	if( m_countPrint > m_lDevices.size() ) {
+		std::string strGPUs;
+		double speedTotal = 0;
+		unsigned int i = 0;
+		for (auto & e : m_lDevices) {
+			const auto curSpeed = e->m_speed.getSpeed();
+			speedTotal += curSpeed;
+			strGPUs += " GPU" + toString(i) + ": " + formatSpeed(curSpeed);
+			++i;
+		}
+
+		std::cout << "Total: " << formatSpeed(speedTotal) << " -" << strGPUs << "\r" << std::flush;
+		m_countPrint = 0;
+	}
+}
+
 void CL_CALLBACK Dispatcher::staticCallback(cl_event event, cl_int event_command_exec_status, void * user_data) {
 	Device * const pDevice = static_cast<Device *>(user_data);
 	pDevice->m_parent.onEvent(event, event_command_exec_status, *pDevice);
 	clReleaseEvent(event);
 }
 
-std::string Dispatcher::formatSpeed(float f) {
+std::string Dispatcher::formatSpeed(double f) {
 	const std::string S = " KMGT";
 
 	unsigned int index = 0;
@@ -330,6 +322,6 @@ std::string Dispatcher::formatSpeed(float f) {
 	}
 
 	std::ostringstream ss;
-	ss << std::fixed << std::setprecision(3) << (float)f << " " << S[index] << "H/s";
+	ss << std::fixed << std::setprecision(3) << (double)f << " " << S[index] << "H/s";
 	return ss.str();
 }

@@ -2,7 +2,7 @@ CC=g++
 CFLAGS=-c -std=c++11 -Wall -mmmx -O2
 CDEFINES=
 LDFLAGS=-s -lOpenCL
-SOURCES=Dispatcher.cpp Mode.cpp precomp.cpp profanity.cpp
+SOURCES=Dispatcher.cpp Mode.cpp precomp.cpp profanity.cpp SpeedSample.cpp
 OBJECTS=$(SOURCES:.cpp=.o)
 EXECUTABLE=profanity.x64
 
