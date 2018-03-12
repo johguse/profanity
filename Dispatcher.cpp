@@ -59,7 +59,8 @@ static void printResult(cl_ulong4 seed, result r, const std::chrono::time_point<
 }
 
 Dispatcher::OpenCLException::OpenCLException(const std::string s, const cl_int res) :
-	std::runtime_error( s + " (res = " + toString(res) + ")")
+	std::runtime_error( s + " (res = " + toString(res) + ")"),
+	m_res(res)
 {
 
 }
@@ -80,8 +81,9 @@ cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::st
 	return ret == NULL ? throw std::runtime_error("failed to create kernel") : ret;
 }
 
-Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal) :
+Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index) :
 	m_parent(parent),
+	m_index(index),
 	m_clDeviceId(clDeviceId),
 	m_worksizeLocal(worksizeLocal),
 	m_clScoreMax(0),
@@ -117,8 +119,8 @@ Dispatcher::~Dispatcher() {
 
 }
 
-void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal) {
-	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal);
+void Dispatcher::addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index) {
+	Device * pDevice = new Device(*this, m_clContext, m_clProgram, clDeviceId, worksizeLocal, index);
 	m_lDevices.push_back(pDevice);
 	init(*pDevice);
 }
@@ -194,11 +196,29 @@ void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel,
 	size_t worksizeOffset = 0;
 	while (worksizeGlobal) {
 		const size_t worksizeRun = std::min(worksizeGlobal, worksizeMax);
-		const auto res = clEnqueueNDRangeKernel(clQueue, clKernel, 1, &worksizeOffset, &worksizeRun, &worksizeLocal, 0, NULL, NULL);
+		const size_t * const pWorksizeLocal = (worksizeLocal == 0 ? NULL : &worksizeLocal);
+		const auto res = clEnqueueNDRangeKernel(clQueue, clKernel, 1, &worksizeOffset, &worksizeRun, pWorksizeLocal, 0, NULL, NULL);
 		OpenCLException::throwIfError("kernel queueing failed", res);
 
 		worksizeGlobal -= worksizeRun;
 		worksizeOffset += worksizeRun;
+	}
+}
+
+void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal) {
+	try {
+		enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal);
+	}
+	catch ( OpenCLException & e ) {
+		// If local work size is invalid, abandon it and let implementation decide
+		if ((e.m_res == CL_INVALID_WORK_GROUP_SIZE || e.m_res == CL_INVALID_WORK_ITEM_SIZE) && d.m_worksizeLocal != 0) {
+			std::cout << std::endl << "warning: local work size abandoned on GPU" << d.m_index << std::endl;
+			d.m_worksizeLocal = 0;
+			enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal);
+		}
+		else {
+			throw;
+		}
 	}
 }
 
@@ -207,15 +227,15 @@ void Dispatcher::dispatch(Device & d) {
 	randomizeSeed(d);
 	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 4, d.m_clSeed);
 
-	enqueueKernel(d.m_clQueue, d.m_kernelBegin, 1, d.m_worksizeLocal);
+	enqueueKernelDevice(d, d.m_kernelBegin, 1);
 
 	for (auto i = 1; i < PROFANITY_PASSES + 1; ++i) {
-		enqueueKernel(d.m_clQueue, d.m_kernelInversePre, g_worksizes[i], d.m_worksizeLocal);
-		enqueueKernel(d.m_clQueue, d.m_kernelInverse, g_worksizes[i] / 255, d.m_worksizeLocal);
-		enqueueKernel(d.m_clQueue, d.m_kernelInversePost, g_worksizes[i], d.m_worksizeLocal);
+		enqueueKernelDevice(d, d.m_kernelInversePre, g_worksizes[i]);
+		enqueueKernelDevice(d, d.m_kernelInverse, g_worksizes[i] / 255);
+		enqueueKernelDevice(d, d.m_kernelInversePost, g_worksizes[i]);
 	}
 
-	enqueueKernel(d.m_clQueue, d.m_kernelEnd, g_worksizes[PROFANITY_PASSES], d.m_worksizeLocal);
+	enqueueKernelDevice(d, d.m_kernelEnd, g_worksizes[PROFANITY_PASSES]);
 
 	cl_event event;
 	d.m_memResult.read(false, &event);
@@ -297,7 +317,7 @@ void Dispatcher::printSpeed() {
 		for (auto & e : m_lDevices) {
 			const auto curSpeed = e->m_speed.getSpeed();
 			speedTotal += curSpeed;
-			strGPUs += " GPU" + toString(i) + ": " + formatSpeed(curSpeed);
+			strGPUs += " GPU" + toString(e->m_index) + ": " + formatSpeed(curSpeed);
 			++i;
 		}
 

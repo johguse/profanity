@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
+#include <map>
 #include <set>
 
 #include <CL/cl.h>
@@ -193,6 +194,8 @@ int main(int argc, char * * argv) {
 
 		std::vector<cl_device_id> vFoundDevices = getAllDevices();
 		std::vector<cl_device_id> vDevices;
+		std::map<cl_device_id, size_t> mDeviceIndex;
+
 		std::vector<std::string> vDeviceBinary;
 		std::vector<size_t> vDeviceBinarySize;
 		cl_int errorCode;
@@ -223,6 +226,7 @@ int main(int argc, char * * argv) {
 
 			std::cout << "\tGPU" << i << ": " << strName << ", " << globalMemSize << " bytes available, " << computeUnits << " compute units (precompiled = " << (precompiled ? "yes" : "no") << ")" << std::endl;
 			vDevices.push_back(vFoundDevices[i]);
+			mDeviceIndex[vFoundDevices[i]] = i;
 		}
 
 		if (vDevices.empty()) {
@@ -303,7 +307,7 @@ int main(int argc, char * * argv) {
 
 		Dispatcher d(clContext, clProgram, mode, worksizeMax, 0);
 		for (auto & i : vDevices) {
-			d.addDevice(i, worksizeLocal);
+			d.addDevice(i, worksizeLocal, mDeviceIndex[i]);
 		}
 
 		d.run();

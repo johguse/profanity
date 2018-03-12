@@ -22,19 +22,22 @@ class Dispatcher {
 				OpenCLException(const std::string s, const cl_int res);
 
 				static void throwIfError(const std::string s, const cl_int res);
+
+				const cl_int m_res;
 		};
 
 		struct Device {
 			static cl_command_queue createQueue(cl_context & clContext, cl_device_id & clDeviceId);
 			static cl_kernel createKernel(cl_program & clProgram, const std::string s);
 
-			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal);
+			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index);
 			~Device();
 
 			Dispatcher & m_parent;
+			const size_t m_index;
 
 			cl_device_id m_clDeviceId;
-			const size_t m_worksizeLocal;
+			size_t m_worksizeLocal;
 			cl_uchar m_clScoreMax;
 			cl_command_queue m_clQueue;
 
@@ -67,13 +70,15 @@ class Dispatcher {
 		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const cl_uchar clScoreQuit = 0);
 		~Dispatcher();
 
-		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal);
+		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index);
 		void run();
 
 	private:
 		void init(Device & d);
 		void dispatch(Device & d);
 		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal);
+		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal);
+
 		void handleResult(Device & d);
 		void randomizeSeed(Device & d);
 
