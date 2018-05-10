@@ -56,10 +56,10 @@ usage: ./profanity [OPTIONS]
 ### Benchmarks
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters|
 |:-:|:-:|:-:|:-:|:-:|:-:|
+|RX VEGA56|1408|1100|YES|146 MH/s| ~29 s
 |R9 290|1150|1400|NO|100 MH/s| ~43 s
 |R9 290|1040|1300|NO|91 MH/s| ~47 s
 |RX 480|1266|2000|YES|83 MH/s| ~52 s
 |RX 580|1366|1750|YES|79 MH/s | ~54 s
 |RX 470|1206|1650|YES|72 MH/s| ~60 s
-|RX VEGA56|1408|1100|YES|146 MH/s| ~29 s
-
+|GTX 1070| - | - | NO | 19.4 MH/s | ~221 s
