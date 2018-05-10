@@ -9,7 +9,8 @@ const size_t g_worksizes[] = {
 };
 
 #define PROFANITY_PASSES 3
-#define PROFANITY_SIZE (g_worksizes[PROFANITY_PASSES])
+#define PROFANITY_SIZE (255 * 255 * 255)
+#define PROFANITY_MEM_SIZE (1 + 255 + 255 * 255 + 255 * 255 * 255)
 #define PROFANITY_DEBUG true
 
 #endif /* HPP_CONSTANTS */

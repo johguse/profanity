@@ -78,7 +78,7 @@ cl_command_queue Dispatcher::Device::createQueue(cl_context & clContext, cl_devi
 
 cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::string s) {
 	cl_kernel ret  = clCreateKernel(clProgram, s.c_str(), NULL);
-	return ret == NULL ? throw std::runtime_error("failed to create kernel") : ret;
+	return ret == NULL ? throw std::runtime_error("failed to create kernel \"" + s + "\"") : ret;
 }
 
 Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index) :
@@ -92,13 +92,14 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_kernelInversePre(createKernel(clProgram, "profanity_inverse_pre")),
 	m_kernelInverse(createKernel(clProgram, "profanity_inverse_multiple")),
 	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
+	m_kernelPass(createKernel(clProgram, "profanity_pass")),
 	m_kernelEnd(createKernel(clProgram, "profanity_end")),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
-	m_memPoints1(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_SIZE, true),
-	m_memPoints2(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_SIZE, true),
-	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_SIZE, true),
+	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, PROFANITY_MEM_SIZE, true),
 	m_memPass(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, 1, true),
 	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, 40),
+	m_memPointOffset(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, 1, true),
+	m_memPointNextOffset(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, 1, true),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_speed(PROFANITY_SPEEDSAMPLES)
@@ -158,37 +159,45 @@ void Dispatcher::init(Device & d) {
 
 	// Kernel arguments - profanity_begin
 	d.m_memPrecomp.setKernelArg(d.m_kernelBegin, 0);
-	d.m_memPoints1.setKernelArg(d.m_kernelBegin, 1);
-	d.m_memPass.setKernelArg(d.m_kernelBegin, 2);
-	d.m_memResult.setKernelArg(d.m_kernelBegin, 3);
+	d.m_memPoints.setKernelArg(d.m_kernelBegin, 1);
+	d.m_memPointOffset.setKernelArg(d.m_kernelBegin, 2);
+	d.m_memPointNextOffset.setKernelArg(d.m_kernelBegin, 3);
+	d.m_memPass.setKernelArg(d.m_kernelBegin, 4);
+	d.m_memResult.setKernelArg(d.m_kernelBegin, 5);
 	/* seed set in dispatch() */
 
 	// Kernel arguments - profanity_inverse_pre
 	d.m_memPrecomp.setKernelArg(d.m_kernelInversePre, 0);
-	d.m_memPoints1.setKernelArg(d.m_kernelInversePre, 1);
-	d.m_memPoints2.setKernelArg(d.m_kernelInversePre, 2);
-	d.m_memInverse.setKernelArg(d.m_kernelInversePre, 3);
+	d.m_memPoints.setKernelArg(d.m_kernelInversePre, 1);
+	d.m_memPointOffset.setKernelArg(d.m_kernelInversePre, 2);
+	d.m_memPointNextOffset.setKernelArg(d.m_kernelInversePre, 3);
 	d.m_memPass.setKernelArg(d.m_kernelInversePre, 4);
 
 	// Kernel arguments - profanity_inverse
-	d.m_memInverse.setKernelArg(d.m_kernelInverse, 0);
-	d.m_memPass.setKernelArg(d.m_kernelInverse, 1);
+	d.m_memPoints.setKernelArg(d.m_kernelInverse, 0);
+	d.m_memPointNextOffset.setKernelArg(d.m_kernelInverse, 1);
 
 	// Kernel arguments - profanity_inverse_post
 	d.m_memPrecomp.setKernelArg(d.m_kernelInversePost, 0);
-	d.m_memPoints1.setKernelArg(d.m_kernelInversePost, 1);
-	d.m_memPoints2.setKernelArg(d.m_kernelInversePost, 2);
-	d.m_memInverse.setKernelArg(d.m_kernelInversePost, 3);
+	d.m_memPoints.setKernelArg(d.m_kernelInversePost, 1);
+	d.m_memPointOffset.setKernelArg(d.m_kernelInversePost, 2);
+	d.m_memPointNextOffset.setKernelArg(d.m_kernelInversePost, 3);
 	d.m_memPass.setKernelArg(d.m_kernelInversePost, 4);
 
-	// Kernel arguments - profanity_end
-	d.m_memPoints1.setKernelArg(d.m_kernelEnd, 0);
-	d.m_memResult.setKernelArg(d.m_kernelEnd, 1);
-	d.m_memData1.setKernelArg(d.m_kernelEnd, 2);
-	d.m_memData2.setKernelArg(d.m_kernelEnd, 3);
+	// Kernel arguments - profanity_pass
+	d.m_memPass.setKernelArg(d.m_kernelPass, 0);
+	d.m_memPointOffset.setKernelArg(d.m_kernelPass, 1);
+	d.m_memPointNextOffset.setKernelArg(d.m_kernelPass, 2);
 
-	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 4, d.m_clScoreMax);
-	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 5, m_mode.mode);
+	// Kernel arguments - profanity_end
+	d.m_memPoints.setKernelArg(d.m_kernelEnd, 0);
+	d.m_memPointOffset.setKernelArg(d.m_kernelEnd, 1);
+	d.m_memResult.setKernelArg(d.m_kernelEnd, 2);
+	d.m_memData1.setKernelArg(d.m_kernelEnd, 3);
+	d.m_memData2.setKernelArg(d.m_kernelEnd, 4);
+
+	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 5, d.m_clScoreMax);
+	CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 6, m_mode.mode);
 }
 
 void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal) {
@@ -225,7 +234,7 @@ void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t wo
 void Dispatcher::dispatch(Device & d) {
 	// Write new seed
 	randomizeSeed(d);
-	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 4, d.m_clSeed);
+	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 6, d.m_clSeed);
 
 	enqueueKernelDevice(d, d.m_kernelBegin, 1);
 
@@ -233,6 +242,7 @@ void Dispatcher::dispatch(Device & d) {
 		enqueueKernelDevice(d, d.m_kernelInversePre, g_worksizes[i]);
 		enqueueKernelDevice(d, d.m_kernelInverse, g_worksizes[i] / 255);
 		enqueueKernelDevice(d, d.m_kernelInversePost, g_worksizes[i]);
+		enqueueKernelDevice(d, d.m_kernelPass, 1);
 	}
 
 	enqueueKernelDevice(d, d.m_kernelEnd, g_worksizes[PROFANITY_PASSES]);
@@ -251,7 +261,7 @@ void Dispatcher::handleResult(Device & d) {
 
 		if (r.found > 0 && r.foundScore >= d.m_clScoreMax) {
 			d.m_clScoreMax = r.foundScore;
-			CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 4, d.m_clScoreMax);
+			CLMemory<cl_uchar>::setKernelArg(d.m_kernelEnd, 5, d.m_clScoreMax);
 
 			std::lock_guard<std::mutex> lock(m_mutex);
 			if (r.foundScore >= m_clScoreMax) {

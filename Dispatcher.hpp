@@ -45,15 +45,18 @@ class Dispatcher {
 			cl_kernel m_kernelInversePre;
 			cl_kernel m_kernelInverse;
 			cl_kernel m_kernelInversePost;
+			cl_kernel m_kernelPass;
 			cl_kernel m_kernelEnd;
 
 			CLMemory<point> m_memPrecomp;
-			CLMemory<point> m_memPoints1;
-			CLMemory<point> m_memPoints2;
-			CLMemory<bignum> m_memInverse;
+			CLMemory<point> m_memPoints;
 			CLMemory<cl_uchar> m_memPass;
 
 			CLMemory<result> m_memResult;
+
+			// Offsets into points array for current and next pass
+			CLMemory<cl_uint> m_memPointOffset;
+			CLMemory<cl_uint> m_memPointNextOffset;
 
 			// Data parameters used in some modes
 			CLMemory<cl_uchar> m_memData1;

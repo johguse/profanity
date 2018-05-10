@@ -315,10 +315,13 @@ void profanity_begin_seed(__global const point * const precomp, point * const p,
 	}
 }
 
-__kernel void profanity_begin(__global const point * const precomp, __global point * const pPoints1, __global uchar * const pPass, __global result * const pResult, const ulong4 seed) {
+__kernel void profanity_begin(__global const point * const precomp, __global point * const pPoints, __global uint * const pPointOffset, __global uint * const pPointNextOffset, __global uchar * const pPass, __global result * const pResult, const ulong4 seed) {
 	const size_t id = get_global_id(0);
 
 	if( id == 0 ) {
+		*pPointOffset = 0;
+		*pPointNextOffset = 1;
+
 		point p;
 		point o;
 		bool bIsFirst = true;
@@ -328,7 +331,7 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 		profanity_begin_seed(precomp, &p, &bIsFirst, 8, 8 * 255 * 2, seed.z);
 		profanity_begin_seed(precomp, &p, &bIsFirst, 8 - PROFANITY_PASSES, 8 * 255 * 3, seed.w);
 
-		pPoints1[0] = p;
+		pPoints[*pPointOffset] = p;
 		*pPass = 8 - PROFANITY_PASSES;
 		for( uchar i = 0; i < 40; ++i ) {
 			pResult[i].found = 0;
@@ -336,29 +339,31 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 	}
 }
 
-__kernel void profanity_inverse_pre(__global const point * const precomp, __global const point * const pPoints1, __global point * const pPoints2, __global mp_number * const pInverse, __global uchar * pPass ) {
+__kernel void profanity_inverse_pre(__global const point * const precomp, __global point * const pPoints, __global const uint * const pPointOffset, __global const uint * const pPointNextOffset, __global uchar * pPass ) {
 	const size_t id = get_global_id(0);
 	
-	point s = pPoints1[id / 255];
+	point s = pPoints[*pPointOffset + id / 255];
 	point o = precomp[8 * 255 * 3 + (*pPass) * 255 + id % 255];
+
 	mp_number deltaX;
-	
 	mp_mod_sub( &deltaX, &o.x, &s.x);
-	pInverse[id] = deltaX;
-	pPoints2[id / 255] = s; // Multiple overwrites
+
+	// Temporarily save number to invert in X-coordinate of next point. Saves quite some memory.
+	pPoints[*pPointNextOffset + id].x = deltaX;
 }
 
-__kernel void profanity_inverse_multiple(__global mp_number * const pInverse, __global uchar * pPass ) {
+__kernel void profanity_inverse_multiple(__global point * const pPoints, __global const uint * const pPointNextOffset) {
 	const size_t id = get_global_id(0) * 255;
 	
 	mp_number inv;
 	mp_number copy; // Optimize this later
 	mp_number buffer[255];
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
+	__global point * const pInverse = pPoints + *pPointNextOffset;
 	
-	buffer[0] = pInverse[id];
+	buffer[0] = pInverse[id].x;
 	for( uchar i = 1; i < 255; ++i ) {
-		copy = pInverse[id + i];
+		copy = pInverse[id + i].x;
 		mp_mul_mont( &buffer[i], &buffer[i-1], &copy );
 	}
 
@@ -371,29 +376,24 @@ __kernel void profanity_inverse_multiple(__global mp_number * const pInverse, __
 	mp_mul_mont(&inv, &inv, &mont_rrr);
 
 	for( uchar i = 255 - 1; i > 0; --i ) {
-		copy = pInverse[id+i];
+		copy = pInverse[id+i].x;
 		mp_mul_mont( &copy, &copy, &inv);
 
 		mp_mul_mont( &buffer[i], &buffer[i-1], &inv);
-		pInverse[id+i] = buffer[i];
+		pInverse[id+i].x = buffer[i];
 		inv = copy;
 	}
 
-	pInverse[id] = inv;
-
-	// We increase the pass counter here where it's not used. (*pPass - 1) used in profanity_inverse_post
-	if( id == 0 ) {
-		*pPass += 1;
-	}
+	pInverse[id].x = inv;
 }
 
-__kernel void profanity_inverse_post(__global const point * const precomp, __global point * const pPoints1, __global point * const pPoints2, __global const mp_number * const pInverse, __global uchar * pPass ) {
+__kernel void profanity_inverse_post(__global const point * const precomp, __global point * const pPoints, __global const uint * const pPointOffset, __global const uint * const pPointNextOffset, __global uchar * pPass ) {
 	const size_t id = get_global_id(0);
 	
-	point s = pPoints2[id / 255];
-	point o = precomp[8 * 255 * 3 + (*pPass - 1) * 255 + id % 255];
+	point s = pPoints[*pPointOffset + id / 255];
+	point o = precomp[8 * 255 * 3 + *pPass * 255 + id % 255];
 	
-	mp_number tmp = pInverse[id];
+	mp_number tmp = pPoints[*pPointNextOffset + id].x; // Inverse was saved to X-coordinate of next point (intermediary storage)
 	mp_number newX;
 	mp_number newY;
 
@@ -409,12 +409,24 @@ __kernel void profanity_inverse_post(__global const point * const precomp, __glo
 	mp_mul_mont( &newY, &newY, &tmp );
 	mp_mod_sub( &newY, &newY, &s.y );
 	
-	pPoints1[id].x = newX;
-	pPoints1[id].y = newY;
+	pPoints[*pPointNextOffset + id].x = newX;
+	pPoints[*pPointNextOffset + id].y = newY;
+}
+
+__kernel void profanity_pass(__global uchar * const pPass, __global uint * const pPointOffset, __global uint * const pPointNextOffset) {
+	++*pPass;
+	*pPointOffset = *pPointNextOffset;
+	uint newPower = 1;
+	for( uint i = 8 - PROFANITY_PASSES; i < *pPass; ++i ) {
+		newPower *= 255;
+	}
+
+	*pPointNextOffset += newPower;
 }
 
 __kernel void profanity_end(
-	__global point * const pPoints1,
+	__global point * const pPoints,
+	__global const uint * const pPointOffset,
 	__global result * const pResult,
 	__constant const uchar * const data1,
 	__constant const uchar * const data2,
@@ -423,7 +435,7 @@ __kernel void profanity_end(
 {
 	const size_t id = get_global_id(0);
 	ethhash h = { { 0 } }; // This doesn't work for some reason, we zero-initialize below.
-	point self = pPoints1[id];
+	point self = pPoints[*pPointOffset + id];
 	uchar i;
 
 	// De-montgomerize by multiplying with one.
