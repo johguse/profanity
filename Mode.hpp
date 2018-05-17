@@ -7,12 +7,13 @@
 class Mode {
 	private:
 		Mode();
-		
+
 	public:
 		static Mode matching(const std::string strHex);
 		static Mode range(const cl_uchar min, const cl_uchar max);
 		static Mode leading(const char charLeading);
 		static Mode leadingRange(const cl_uchar min, const cl_uchar max);
+		static Mode mirror();
 
 		static Mode benchmark();
 		static Mode zeros();
@@ -25,5 +26,5 @@ class Mode {
 		cl_uchar data2[20];
 		cl_uchar score;
 };
-		
+
 #endif /* HPP_MODE */

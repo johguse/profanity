@@ -516,6 +516,26 @@ __kernel void profanity_end(
 				break;
 			}
 		}
+	} else if( mode == 5 ) {
+		for( i = 0; i < 10; ++i ) {
+			const uchar leftLeft = (hash[9-i] & 0xF0) >> 4;
+			const uchar leftRight = (hash[9-i] & 0x0F); 
+
+			const uchar rightLeft = (hash[10+i] & 0xF0) >> 4;
+			const uchar rightRight = (hash[10+i] & 0x0F);
+
+			if( leftRight != rightLeft ) {
+				break;
+			}
+
+			++score;
+
+			if( leftLeft != rightRight ) {
+				break;
+			}
+
+			++score;
+		}
 	}
 
 	if( score && score > scoreMax ) {

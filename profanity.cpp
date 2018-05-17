@@ -138,6 +138,7 @@ int main(int argc, char * * argv) {
 		std::string strModeMatching;
 		bool bModeLeadingRange = false;
 		bool bModeRange = false;
+		bool bModeMirror = false;
 		int rangeMin = 0;
 		int rangeMax = 0;
 		std::vector<size_t> vDeviceSkipIndex;
@@ -153,6 +154,7 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('5', "matching", strModeMatching);
 		argp.addSwitch('6', "leading-range", bModeLeadingRange);
 		argp.addSwitch('7', "range", bModeRange);
+		argp.addSwitch('8', "mirror", bModeMirror);
 		argp.addSwitch('m', "min", rangeMin);
 		argp.addSwitch('M', "max", rangeMax);
 		argp.addMultiSwitch('s', "skip", vDeviceSkipIndex);
@@ -185,6 +187,8 @@ int main(int argc, char * * argv) {
 			mode = Mode::leadingRange(rangeMin, rangeMax);
 		} else if (bModeRange) {
 			mode = Mode::range(rangeMin, rangeMax);
+		} else if(bModeMirror) {
+			mode = Mode::mirror();
 		} else {
 			std::cout << g_strHelp << std::endl;
 			return 0;

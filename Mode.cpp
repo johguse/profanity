@@ -1,7 +1,7 @@
 #include "Mode.hpp"
 
 Mode::Mode() : score(0) {
-	
+
 }
 
 Mode Mode::benchmark() {
@@ -10,7 +10,7 @@ Mode Mode::benchmark() {
 	r.name = "benchmark";
 	return r;
 }
-		
+
 Mode Mode::zeros() {
 	Mode r = range(0, 0);
 	r.name = "zeros";
@@ -21,13 +21,13 @@ Mode Mode::matching(const std::string strHex) {
 	Mode r;
 	r.mode = 1;
 	r.name = "matching";
-	
+
 	std::fill( r.data1, r.data1 + sizeof(r.data1), cl_uchar(0) );
 	std::fill( r.data2, r.data2 + sizeof(r.data2), cl_uchar(0) );
-	
+
 	const std::string hex = "0123456789abcdef";
 	auto index = 0;
-	
+
 	for( size_t i = 0; i < strHex.size(); i += 2 ) {
 		const auto indexHi = hex.find(strHex[i]);
 		const auto indexLo = i + 1 < strHex.size() ? hex.find(strHex[i+1]) : std::string::npos;
@@ -37,13 +37,13 @@ Mode Mode::matching(const std::string strHex) {
 
 		const auto maskHi = (indexHi == std::string::npos) ? 0 : 0xF << 4;
 		const auto maskLo = (indexLo == std::string::npos) ? 0 : 0xF;
-		
+
 		r.data1[index] = maskHi | maskLo;
 		r.data2[index] = valHi | valLo;
-		
+
 		++index;
 	}
-	
+
 	return r;
 }
 
@@ -83,5 +83,12 @@ Mode Mode::leadingRange(const cl_uchar min, const cl_uchar max) {
 	r.mode = 4;
 	r.data1[0] = min;
 	r.data2[0] = max;
+	return r;
+}
+
+Mode Mode::mirror() {
+	Mode r;
+	r.name = "mirror";
+	r.mode = 5;
 	return r;
 }
