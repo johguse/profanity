@@ -14,7 +14,6 @@
 
 #include "Dispatcher.hpp"
 #include "ArgParser.hpp"
-#include "constants.hpp"
 #include "Mode.hpp"
 #include "help.hpp"
 
@@ -126,6 +125,11 @@ bool printResult(const cl_int err) {
 	return err != CL_SUCCESS;
 }
 
+std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize) {
+	const auto uniqueId = getUniqueDeviceIdentifier(d);
+	return "cache-opencl." + toString(inverseSize) + "." + toString(uniqueId);
+}
+
 int main(int argc, char * * argv) {
 	try {
 		ArgParser argp(argc, argv);
@@ -144,6 +148,9 @@ int main(int argc, char * * argv) {
 		std::vector<size_t> vDeviceSkipIndex;
 		size_t worksizeLocal = 64;
 		size_t worksizeMax = 1048576;
+		bool bNoCache = false;
+		size_t inverseSize = 1023;
+		size_t inverseMultiple = 16400;
 
 		argp.addSwitch('h', "help", bHelp);
 		argp.addSwitch('0', "benchmark", bModeBenchmark);
@@ -159,7 +166,11 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('M', "max", rangeMax);
 		argp.addMultiSwitch('s', "skip", vDeviceSkipIndex);
 		argp.addSwitch('w', "work", worksizeLocal);
-		argp.addSwitch('W', "workmax", worksizeMax);
+		argp.addSwitch('W', "work-max", worksizeMax);
+		argp.addSwitch('n', "no-cache", bNoCache);
+		argp.addSwitch('i', "inverse-size", inverseSize);
+		argp.addSwitch('I', "inverse-multiple", inverseMultiple);
+
 		if (!argp.parse()) {
 			std::cout << "error: bad arguments, try again :<" << std::endl;
 			return 1;
@@ -217,18 +228,19 @@ int main(int argc, char * * argv) {
 			const auto strName = clGetWrapperString(clGetDeviceInfo, deviceId, CL_DEVICE_NAME);
 			const auto computeUnits = clGetWrapper<cl_uint>(clGetDeviceInfo, deviceId, CL_DEVICE_MAX_COMPUTE_UNITS);
 			const auto globalMemSize = clGetWrapper<cl_ulong>(clGetDeviceInfo, deviceId, CL_DEVICE_GLOBAL_MEM_SIZE);
-			const auto uniqueId = getUniqueDeviceIdentifier(deviceId);
 			bool precompiled = false;
 
 			// Check if there's a prebuilt binary for this device and load it
-			std::ifstream fileIn("cache-opencl." + toString(uniqueId), std::ios::binary);
-			if (fileIn.is_open()) {
-				vDeviceBinary.push_back(std::string((std::istreambuf_iterator<char>(fileIn)), std::istreambuf_iterator<char>()));
-				vDeviceBinarySize.push_back(vDeviceBinary.back().size());
-				precompiled = true;
+			if(!bNoCache) {
+				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize), std::ios::binary);
+				if (fileIn.is_open()) {
+					vDeviceBinary.push_back(std::string((std::istreambuf_iterator<char>(fileIn)), std::istreambuf_iterator<char>()));
+					vDeviceBinarySize.push_back(vDeviceBinary.back().size());
+					precompiled = true;
+				}
 			}
 
-			std::cout << "\tGPU" << i << ": " << strName << ", " << globalMemSize << " bytes available, " << computeUnits << " compute units (precompiled = " << (precompiled ? "yes" : "no") << ")" << std::endl;
+			std::cout << "  GPU" << i << ": " << strName << ", " << globalMemSize << " bytes available, " << computeUnits << " compute units (precompiled = " << (precompiled ? "yes" : "no") << ")" << std::endl;
 			vDevices.push_back(vFoundDevices[i]);
 			mDeviceIndex[vFoundDevices[i]] = i;
 		}
@@ -239,7 +251,7 @@ int main(int argc, char * * argv) {
 
 		std::cout << std::endl;
 		std::cout << "Initializing OpenCL..." << std::endl;
-		std::cout << "\tCreating context..." << std::flush;
+		std::cout << "  Creating context..." << std::flush;
 		auto clContext = clCreateContext( NULL, vDevices.size(), vDevices.data(), NULL, NULL, &errorCode);
 		if (printResult(clContext, errorCode)) {
 			return 1;
@@ -250,7 +262,7 @@ int main(int argc, char * * argv) {
 			// Create program from binaries
 			bUsedCache = true;
 
-			std::cout << "\tLoading kernel from binary..." << std::flush;
+			std::cout << "  Loading kernel from binary..." << std::flush;
 			const unsigned char * * pKernels = new const unsigned char *[vDevices.size()];
 			for (size_t i = 0; i < vDeviceBinary.size(); ++i) {
 				pKernels[i] = reinterpret_cast<const unsigned char *>(vDeviceBinary[i].data());
@@ -264,7 +276,7 @@ int main(int argc, char * * argv) {
 			}
 		} else {
 			// Create a program from the kernel source
-			std::cout << "\tCompiling kernel..." << std::flush;
+			std::cout << "  Compiling kernel..." << std::flush;
 			const std::string strKeccak = readFile("keccak.cl");
 			const std::string strVanity = readFile("profanity.cl");
 			const char * szKernels[] = { strKeccak.c_str(), strVanity.c_str() };
@@ -276,9 +288,9 @@ int main(int argc, char * * argv) {
 		}
 
 		// Build the program
-		std::cout << "\tBuilding program..." << std::flush;
-		const std::string strBuildOptions = "-D PROFANITY_PASSES=" + toString(PROFANITY_PASSES);
-		if( printResult( clBuildProgram(clProgram, vDevices.size(), vDevices.data(), strBuildOptions.c_str(), NULL, NULL) ) ) {
+		std::cout << "  Building program..." << std::flush;
+		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize);
+		if (printResult(clBuildProgram(clProgram, vDevices.size(), vDevices.data(), strBuildOptions.c_str(), NULL, NULL))) {
 #ifdef PROFANITY_DEBUG
 			std::cout << std::endl;
 			std::cout << "build log:" << std::endl;
@@ -295,13 +307,11 @@ int main(int argc, char * * argv) {
 		}
 
 		// Save binary to improve future start times
-		if( !bUsedCache ) {
-			std::cout << "\tSaving program..." << std::flush;
+		if( !bUsedCache && !bNoCache ) {
+			std::cout << "  Saving program..." << std::flush;
 			auto binaries = getBinaries(clProgram);
 			for (size_t i = 0; i < binaries.size(); ++i) {
-				const auto uniqueId = getUniqueDeviceIdentifier(vDevices[i]);
-				const std::string strOutFile = "cache-opencl." + toString(uniqueId);
-				std::ofstream fileOut(strOutFile, std::ios::binary);
+				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize), std::ios::binary);
 				fileOut.write(binaries[i].data(), binaries[i].size());
 			}
 			std::cout << "OK" << std::endl;
@@ -309,7 +319,7 @@ int main(int argc, char * * argv) {
 
 		std::cout << std::endl;
 
-		Dispatcher d(clContext, clProgram, mode, worksizeMax, 0);
+		Dispatcher d(clContext, clProgram, mode, worksizeMax, inverseSize, inverseMultiple, 0);
 		for (auto & i : vDevices) {
 			d.addDevice(i, worksizeLocal, mDeviceIndex[i]);
 		}

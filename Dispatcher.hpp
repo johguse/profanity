@@ -5,8 +5,8 @@
 #include <fstream>
 #include <CL/cl.h>
 #include <string>
+#include <vector>
 #include <mutex>
-#include <list>
 
 #include "SpeedSample.hpp"
 #include "CLMemory.hpp"
@@ -29,8 +29,9 @@ class Dispatcher {
 		struct Device {
 			static cl_command_queue createQueue(cl_context & clContext, cl_device_id & clDeviceId);
 			static cl_kernel createKernel(cl_program & clProgram, const std::string s);
+			static cl_ulong4 createSeed();
 
-			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index);
+			Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode);
 			~Device();
 
 			Dispatcher & m_parent;
@@ -42,45 +43,43 @@ class Dispatcher {
 			cl_command_queue m_clQueue;
 
 			cl_kernel m_kernelBegin;
-			cl_kernel m_kernelInversePre;
 			cl_kernel m_kernelInverse;
 			cl_kernel m_kernelInversePost;
-			cl_kernel m_kernelPass;
 			cl_kernel m_kernelEnd;
+			cl_kernel m_kernelScore;
 
 			CLMemory<point> m_memPrecomp;
 			CLMemory<point> m_memPoints;
-			CLMemory<cl_uchar> m_memPass;
+			CLMemory<mp_number> m_memInverse;
 
 			CLMemory<result> m_memResult;
-
-			// Offsets into points array for current and next pass
-			CLMemory<cl_uint> m_memPointOffset;
-			CLMemory<cl_uint> m_memPointNextOffset;
 
 			// Data parameters used in some modes
 			CLMemory<cl_uchar> m_memData1;
 			CLMemory<cl_uchar> m_memData2;
 
-			// Current seed for this device
-			cl_ulong4 m_clSeed;
-
 			// Speed sampling
 			SpeedSample m_speed;
+
+			cl_ulong4 m_clSeed;
+			bool m_seeded;
+
+			cl_ulong m_round;
 		};
 
 	public:
-		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const cl_uchar clScoreQuit = 0);
+		Dispatcher(cl_context & clContext, cl_program & clProgram, const Mode mode, const size_t worksizeMax, const size_t inverseSize, const size_t inverseMultiple, const cl_uchar clScoreQuit = 0);
 		~Dispatcher();
 
 		void addDevice(cl_device_id clDeviceId, const size_t worksizeLocal, const size_t index);
 		void run();
 
 	private:
-		void init(Device & d);
+		void init();
+		void init(Device & d, cl_event & event);
 		void dispatch(Device & d);
-		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal);
-		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal);
+		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, const bool bSynchronous);
+		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, const bool bSynchronous);
 
 		void handleResult(Device & d);
 		void randomizeSeed(Device & d);
@@ -99,10 +98,12 @@ class Dispatcher {
 		cl_program & m_clProgram;
 		const Mode m_mode;
 		const size_t m_worksizeMax;
+		const size_t m_inverseSize;
+		const size_t m_size;
 		cl_uchar m_clScoreMax;
 		cl_uchar m_clScoreQuit;
 
-		std::list<Device *> m_lDevices;
+		std::vector<Device *> m_vDevices;
 
 		cl_event m_eventFinished;
 
@@ -112,7 +113,6 @@ class Dispatcher {
 		unsigned int m_countPrint;
 		unsigned int m_countRunning;
 		bool m_quit;
-
 };
 
 #endif /* HPP_DISPATCHER */

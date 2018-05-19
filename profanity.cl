@@ -58,6 +58,51 @@ void mp_mod_sub( mp_number * const r, const mp_number * const a, const mp_number
 	}
 }
 
+void mp_mod_sub_gx( mp_number * const r, const mp_number * const a) {
+    // gx = {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643}
+	//point g = { {  }, { {0xd3dbabe2, 0xb15ea6d2, 0x1f1dc64d, 0x8dfc5d5d, 0xac19c136, 0x70b6b59a, 0xd4a582d6, 0xcf3f851f} } };
+
+	mp_word i, t, c = 0;
+	
+	t = a->d[0] - 0x487e2097; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
+	t = a->d[1] - 0xd7362e5a - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
+	t = a->d[2] - 0x29bc66db - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
+	t = a->d[3] - 0x231e2953 - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
+	t = a->d[4] - 0x33fd129c - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
+	t = a->d[5] - 0x979f48c0 - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
+	t = a->d[6] - 0xe9089f48 - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
+	t = a->d[7] - 0x9981e643 - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
+	
+	if(c) {
+		c = 0;
+		for( i = 0; i < MP_WORDS; ++i ) {
+			r->d[i] += mod.d[i] + c;
+			c = r->d[i] < mod.d[i] ? 1 : (r->d[i] == mod.d[i] ? c : 0);
+		}
+	}
+}
+
+void mp_mod_sub_gy( mp_number * const r, const mp_number * const a) {
+	mp_word i, t, c = 0;
+	
+	t = a->d[0] - 0xd3dbabe2; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
+	t = a->d[1] - 0xb15ea6d2 - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
+	t = a->d[2] - 0x1f1dc64d - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
+	t = a->d[3] - 0x8dfc5d5d - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
+	t = a->d[4] - 0xac19c136 - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
+	t = a->d[5] - 0x70b6b59a - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
+	t = a->d[6] - 0xd4a582d6 - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
+	t = a->d[7] - 0xcf3f851f - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
+	
+	if(c) {
+		c = 0;
+		for( i = 0; i < MP_WORDS; ++i ) {
+			r->d[i] += mod.d[i] + c;
+			c = r->d[i] < mod.d[i] ? 1 : (r->d[i] == mod.d[i] ? c : 0);
+		}
+	}
+}
+
 mp_word mp_add( mp_number * const r, const mp_number * const a ) {
 	mp_word c = 0;
 	
@@ -259,6 +304,9 @@ typedef struct {
     mp_number y;
 } point;
 
+// OpenCL crashes when trying to initialize local variables using the below
+//__constant point generator = { { {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643} }, { {0xd3dbabe2, 0xb15ea6d2, 0x1f1dc64d, 0x8dfc5d5d, 0xac19c136, 0x70b6b59a, 0xd4a582d6, 0xcf3f851f} } };
+
 // Does not handle points sharing X coordinate, this is a deliberate design choice.
 void point_add(point * const p, point * const o) {
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0} };
@@ -293,16 +341,16 @@ void point_add(point * const p, point * const o) {
 typedef struct {
 	uint found;
 	uint foundId;
-	uchar foundScore;
 	uchar foundHash[20];
 } result;
 
-void profanity_begin_seed(__global const point * const precomp, point * const p, bool * const pIsFirst, const uchar byteCount, const size_t precompOffset, const ulong seed) {
+void profanity_begin_seed(__global const point * const precomp, point * const p, bool * const pIsFirst, const size_t precompOffset, const ulong seed) {
 	point o;
 
-	for( uchar i = 0; i < byteCount; ++i ) {
+	for( uchar i = 0; i < 8; ++i ) {
 		const uchar shift = i * 8;
 		const uchar byte = (seed >> shift) & 0xFF;
+
 		if(byte) {
 			o = precomp[precompOffset + i * 255 + byte - 1];
 			if( *pIsFirst ) {
@@ -315,55 +363,40 @@ void profanity_begin_seed(__global const point * const precomp, point * const p,
 	}
 }
 
-__kernel void profanity_begin(__global const point * const precomp, __global point * const pPoints, __global uint * const pPointOffset, __global uint * const pPointNextOffset, __global uchar * const pPass, __global result * const pResult, const ulong4 seed) {
+__kernel void profanity_begin(__global const point * const precomp, __global point * const pPoints, __global result * const pResult, const ulong4 seed) {
 	const size_t id = get_global_id(0);
+	point p;
+	bool bIsFirst = true;
 
-	if( id == 0 ) {
-		*pPointOffset = 0;
-		*pPointNextOffset = 1;
+	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 0, seed.x);
+	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 1, seed.y);
+	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 2, seed.z);
+	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 3, seed.w + id);
 
-		point p;
-		point o;
-		bool bIsFirst = true;
+	pPoints[id] = p;
 
-		profanity_begin_seed(precomp, &p, &bIsFirst, 8, 8 * 255 * 0, seed.x);
-		profanity_begin_seed(precomp, &p, &bIsFirst, 8, 8 * 255 * 1, seed.y);
-		profanity_begin_seed(precomp, &p, &bIsFirst, 8, 8 * 255 * 2, seed.z);
-		profanity_begin_seed(precomp, &p, &bIsFirst, 8 - PROFANITY_PASSES, 8 * 255 * 3, seed.w);
-
-		pPoints[*pPointOffset] = p;
-		*pPass = 8 - PROFANITY_PASSES;
-		for( uchar i = 0; i < 40; ++i ) {
-			pResult[i].found = 0;
-		}
+	for( uchar i = 0; i < 40; ++i ) {
+		pResult[i].found = 0;
 	}
 }
 
-__kernel void profanity_inverse_pre(__global const point * const precomp, __global point * const pPoints, __global const uint * const pPointOffset, __global const uint * const pPointNextOffset, __global uchar * pPass ) {
-	const size_t id = get_global_id(0);
-	
-	point s = pPoints[*pPointOffset + id / 255];
-	point o = precomp[8 * 255 * 3 + (*pPass) * 255 + id % 255];
-
-	mp_number deltaX;
-	mp_mod_sub( &deltaX, &o.x, &s.x);
-
-	// Temporarily save number to invert in X-coordinate of next point. Saves quite some memory.
-	pPoints[*pPointNextOffset + id].x = deltaX;
-}
-
-__kernel void profanity_inverse_multiple(__global point * const pPoints, __global const uint * const pPointNextOffset) {
-	const size_t id = get_global_id(0) * 255;
+__kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
+	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
 	
 	mp_number inv;
 	mp_number copy; // Optimize this later
-	mp_number buffer[255];
+	mp_number buffer[PROFANITY_INVERSE_SIZE];
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
-	__global point * const pInverse = pPoints + *pPointNextOffset;
-	
-	buffer[0] = pInverse[id].x;
-	for( uchar i = 1; i < 255; ++i ) {
-		copy = pInverse[id + i].x;
+
+	copy = pPoints[id].x;
+	mp_mod_sub_gx( &copy, &copy );
+	buffer[0] = copy;
+	pInverse[0] = copy;
+
+	for( uint i = 1; i < PROFANITY_INVERSE_SIZE; ++i ) {
+		copy = pPoints[id+i].x;
+		mp_mod_sub_gx( &copy, &copy );
+		pInverse[id+i] = copy;
 		mp_mul_mont( &buffer[i], &buffer[i-1], &copy );
 	}
 
@@ -371,184 +404,204 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 	// mp_mul_mont(x,y) -> x * y * R^-1
 	// mp_mul_mont( (aR)^-1, R^3 ) -> (aR)^-1 * R^3 * R^-1 = a^-1 * R
 	// Also: Compiler really fucks the below up unless we use a temporary variable. Why?!
-	inv = buffer[255-1];
+	inv = buffer[PROFANITY_INVERSE_SIZE-1];
 	mp_mod_inverse( &inv );
-	mp_mul_mont(&inv, &inv, &mont_rrr);
+	mp_mul_mont(&inv, &inv, &mont_rrr); 
 
-	for( uchar i = 255 - 1; i > 0; --i ) {
-		copy = pInverse[id+i].x;
+	for( uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i ) {
+		copy = pInverse[id+i];
 		mp_mul_mont( &copy, &copy, &inv);
 
 		mp_mul_mont( &buffer[i], &buffer[i-1], &inv);
-		pInverse[id+i].x = buffer[i];
+		pInverse[id+i] = buffer[i];
 		inv = copy;
 	}
 
-	pInverse[id].x = inv;
+	pInverse[id] = inv;
 }
 
-__kernel void profanity_inverse_post(__global const point * const precomp, __global point * const pPoints, __global const uint * const pPointOffset, __global const uint * const pPointNextOffset, __global uchar * pPass ) {
+__kernel void profanity_inverse_post(__global point * const pPoints, __global const mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
 	
-	point s = pPoints[*pPointOffset + id / 255];
-	point o = precomp[8 * 255 * 3 + *pPass * 255 + id % 255];
+	point n = pPoints[id];
+	mp_number tmp = pInverse[id];
+	mp_number gx = { {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643} };
+
+	// newY used as temporary variable in following two statements
+	mp_mod_sub_gy( &n.y, &n.y );
+	mp_mul_mont( &tmp, &tmp, &n.y );
+	n.y = n.x;
+
+	mp_mul_mont( &n.x, &tmp, &tmp );
+	mp_mod_sub( &n.x, &n.x, &n.y );
+	mp_mod_sub_gx(&n.x, &n.x);
+
+	mp_mod_sub( &n.y, &gx, &n.x );
+	mp_mul_mont( &n.y, &n.y, &tmp );
+	mp_mod_sub_gy(&n.y, &n.y);
 	
-	mp_number tmp = pPoints[*pPointNextOffset + id].x; // Inverse was saved to X-coordinate of next point (intermediary storage)
-	mp_number newX;
-	mp_number newY;
-
-	// newX used as temporary variable in following two statements
-	mp_mod_sub( &newX, &o.y, &s.y );
-	mp_mul_mont( &tmp, &tmp, &newX );
-
-	mp_mul_mont( &newX, &tmp, &tmp );
-	mp_mod_sub( &newX, &newX, &s.x );
-	mp_mod_sub( &newX, &newX, &o.x );
-
-	mp_mod_sub( &newY, &s.x, &newX );
-	mp_mul_mont( &newY, &newY, &tmp );
-	mp_mod_sub( &newY, &newY, &s.y );
-	
-	pPoints[*pPointNextOffset + id].x = newX;
-	pPoints[*pPointNextOffset + id].y = newY;
-}
-
-__kernel void profanity_pass(__global uchar * const pPass, __global uint * const pPointOffset, __global uint * const pPointNextOffset) {
-	++*pPass;
-	*pPointOffset = *pPointNextOffset;
-	uint newPower = 1;
-	for( uint i = 8 - PROFANITY_PASSES; i < *pPass; ++i ) {
-		newPower *= 255;
-	}
-
-	*pPointNextOffset += newPower;
+	pPoints[id] = n;
 }
 
 __kernel void profanity_end(
 	__global point * const pPoints,
-	__global const uint * const pPointOffset,
-	__global result * const pResult,
-	__constant const uchar * const data1,
-	__constant const uchar * const data2,
-	const uchar scoreMax,
-	const uchar mode )
-{
+	__global mp_number * const pInverse ) {
 	const size_t id = get_global_id(0);
-	ethhash h = { { 0 } }; // This doesn't work for some reason, we zero-initialize below.
-	point self = pPoints[*pPointOffset + id];
-	uchar i;
+	ethhash h;
+	point p = pPoints[id];
 
 	// De-montgomerize by multiplying with one.
-	mp_mul_mont_one(&self.x, &self.x);
-	mp_mul_mont_one(&self.y, &self.y);
+	mp_mul_mont_one(&p.x, &p.x);
+	mp_mul_mont_one(&p.y, &p.y);
 
 	// We can't initialize via h.q here, even if we do "h.q[i] = (ulong) 0", I have no idea why.
-	for( i = 0; i < 50; ++i ) {
+	for( int i = 0; i < 50; ++i ) {
 		h.d[i] = 0;
 	}
 
-	for( i = 0; i < MP_WORDS; ++i ) {
-		h.d[i] = bswap32( self.x.d[MP_WORDS - 1 - i] );
-		h.d[i+8] = bswap32( self.y.d[MP_WORDS - 1 - i] );
+	for( int i = 0; i < MP_WORDS; ++i ) {
+		h.d[i] = bswap32( p.x.d[MP_WORDS - 1 - i] );
+		h.d[i+8] = bswap32( p.y.d[MP_WORDS - 1 - i] );
 	}
 	
 	sha3_keccakf(&h);
-	const uchar * const hash = h.b + 12;
-	uchar score = 0;
-	
-	if( mode == 0 ) {
-		for( i = 0; i < 20; ++i ) {
-			if( (hash[i] & 0xF0) == 0 ) {
-				++score;
-			}
-			
-			if( (hash[i] & 0x0F) == 0 ) {
-				++score;
-			}
-		}
-	} else if( mode == 1 ) {
-		for( i = 0; i < 20; ++i ) {
-			if( data1[i] > 0 && (hash[i] & data1[i]) == data2[i] ) {
-				++score;
-			}
-		}
-	} else if( mode == 2 ) {
-		for( i = 0; i < 20; ++i ) {
-			if( (hash[i] & 0xF0) >> 4 == data1[0] ) {
-				++score;
-			} else {
-				break;
-			}
-			
-			if( (hash[i] & 0x0F) == data1[0] ) {
-				++score;
-			} else {
-				break;
-			}
-		}
-	} else if( mode == 3 ) {
-		for( i = 0; i < 20; ++i ) {
-			const uchar first = (hash[i] & 0xF0) >> 4;
-			const uchar second = (hash[i] & 0x0F);
 
-			if( first >= data1[0] && first <= data2[0] ) {
-				++score;
-			}
+	pInverse[id].d[0] = h.d[3];
+	pInverse[id].d[1] = h.d[4];
+	pInverse[id].d[2] = h.d[5];
+	pInverse[id].d[3] = h.d[6];
+	pInverse[id].d[4] = h.d[7];
+}
 
-			if( second >= data1[0] && second <= data2[0] ) {
-				++score;
-			}
-		}	
-	} else if( mode == 4 ) {
-		for( i = 0; i < 20; ++i ) {
-			const uchar first = (hash[i] & 0xF0) >> 4;
-			const uchar second = (hash[i] & 0x0F);
-
-			if( first >= data1[0] && first <= data2[0] ) {
-				++score;
-			} else {
-				break;
-			}
-
-			if( second >= data1[0] && second <= data2[0] ) {
-				++score;
-			} else {
-				break;
-			}
-		}
-	} else if( mode == 5 ) {
-		for( i = 0; i < 10; ++i ) {
-			const uchar leftLeft = (hash[9-i] & 0xF0) >> 4;
-			const uchar leftRight = (hash[9-i] & 0x0F); 
-
-			const uchar rightLeft = (hash[10+i] & 0xF0) >> 4;
-			const uchar rightRight = (hash[10+i] & 0x0F);
-
-			if( leftRight != rightLeft ) {
-				break;
-			}
-
-			++score;
-
-			if( leftLeft != rightRight ) {
-				break;
-			}
-
-			++score;
-		}
-	}
-
+void profanity_result_update( const size_t id, __global const uchar * const hash, __global result * const pResult, const uchar score, const uchar scoreMax ) {
 	if( score && score > scoreMax ) {
 		uchar hasResult = atomic_inc(&pResult[score].found); // NOTE: If "too many" results are found it'll wrap around to 0 again and overwrite last result. Only relevant if global worksize exceeds MAX(uint).
 
 		// Save only one result for each score, the first.
 		if( hasResult == 0 ) {
 			pResult[score].foundId = id;
-			pResult[score].foundScore = score;
 
-			for( i = 0; i < 20; ++i ) {
+			for( int i = 0; i < 20; ++i ) {
 				pResult[score].foundHash[i] = hash[i];
 			}
 		}
-	}	
+	}
+}
+
+__kernel void profanity_score_benchmark(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_matching(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for( int i = 0; i < 20; ++i ) {
+		if( data1[i] > 0 && (hash[i] & data1[i]) == data2[i] ) {
+			++score;
+		}
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_leading(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for( int i = 0; i < 20; ++i ) {
+		if( (hash[i] & 0xF0) >> 4 == data1[0] ) {
+			++score;
+		} else {
+			break;
+		}
+			
+		if( (hash[i] & 0x0F) == data1[0] ) {
+			++score;
+		} else {
+			break;
+		}
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_range(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for( int i = 0; i < 20; ++i ) {
+		const uchar first = (hash[i] & 0xF0) >> 4;
+		const uchar second = (hash[i] & 0x0F);
+
+		if( first >= data1[0] && first <= data2[0] ) {
+			++score;
+		}
+
+		if( second >= data1[0] && second <= data2[0] ) {
+			++score;
+		}
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_leadingrange(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for( int i = 0; i < 20; ++i ) {
+		const uchar first = (hash[i] & 0xF0) >> 4;
+		const uchar second = (hash[i] & 0x0F);
+
+		if( first >= data1[0] && first <= data2[0] ) {
+			++score;
+		} else {
+			break;
+		}
+
+		if( second >= data1[0] && second <= data2[0] ) {
+			++score;
+		} else {
+			break;
+		}
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_mirror(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for( int i = 0; i < 10; ++i ) {
+		const uchar leftLeft = (hash[9-i] & 0xF0) >> 4;
+		const uchar leftRight = (hash[9-i] & 0x0F); 
+
+		const uchar rightLeft = (hash[10+i] & 0xF0) >> 4;
+		const uchar rightRight = (hash[10+i] & 0x0F);
+
+		if( leftRight != rightLeft ) {
+			break;
+		}
+
+		++score;
+
+		if( leftLeft != rightRight ) {
+			break;
+		}
+
+		++score;
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
 }

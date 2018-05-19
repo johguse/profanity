@@ -6,23 +6,22 @@
  */
 #include <CL/cl.h>
 
-#define BN_NWORDS 8
+#define MP_NWORDS 8
 
-typedef cl_uint bn_word;
-
-typedef struct {
-	bn_word d[BN_NWORDS];
-} bignum;
+typedef cl_uint mp_word;
 
 typedef struct {
-    bignum x;
-    bignum y;
+	mp_word d[MP_NWORDS];
+} mp_number;
+
+typedef struct {
+    mp_number x;
+    mp_number y;
 } point;
 
 typedef struct {
 	cl_uint found;
 	cl_uint foundId;
-	cl_uchar foundScore;
 	cl_uchar foundHash[20];
 } result;
 

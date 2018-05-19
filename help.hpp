@@ -27,10 +27,17 @@ usage: ./profanity [OPTIONS]
     -m, --min <0-15>        Set range minimum (inclusive), 0 is '0' 15 is 'f'.
     -M, --max <0-15>        Set range maximum (inclusive), 0 is '0' 15 is 'f'.
 
-  Misc:
+  Device control:
     -s, --skip <index>      Skip device given by index.
+    -n, --no-cache           Don't load cached pre-compiled version of kernel.
+
+  Tweaking:
     -w, --work <size>       Set OpenCL local work size. [default = 64]
-    -W, --workmax <size>    Set OpenCL maximum work size. [default = 1048576]
+    -W, --work-max <size>   Set OpenCL maximum work size. [default = 1048576]
+    -i, --inverse-size      Set size of modular inverses to calculate in one
+                            work item. [default = 256]
+    -I, --inverse-multiple  Set how many above work items will run in
+                            parallell. [default = 65536]
 
   Examples:
     ./profanity --leading f

@@ -21,7 +21,8 @@ class Mode {
 		static Mode numbers();
 
 		std::string name;
-		cl_uchar mode;
+		std::string kernel;
+
 		cl_uchar data1[20];
 		cl_uchar data2[20];
 		cl_uchar score;

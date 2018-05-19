@@ -6,8 +6,8 @@ Mode::Mode() : score(0) {
 
 Mode Mode::benchmark() {
 	Mode r;
-	r.mode = static_cast<cl_uchar>(-1);
 	r.name = "benchmark";
+	r.kernel = "profanity_score_benchmark";
 	return r;
 }
 
@@ -19,8 +19,8 @@ Mode Mode::zeros() {
 
 Mode Mode::matching(const std::string strHex) {
 	Mode r;
-	r.mode = 1;
 	r.name = "matching";
+	r.kernel = "profanity_score_matching";
 
 	std::fill( r.data1, r.data1 + sizeof(r.data1), cl_uchar(0) );
 	std::fill( r.data2, r.data2 + sizeof(r.data2), cl_uchar(0) );
@@ -49,17 +49,18 @@ Mode Mode::matching(const std::string strHex) {
 
 Mode Mode::leading(const char charLeading) {
 	const std::string hex = "0123456789abcdef";
+
 	Mode r;
-	r.mode = 2;
-	r.data1[0] = static_cast<cl_uchar>(hex.find(charLeading));
 	r.name = "leading";
+	r.kernel = "profanity_score_leading";
+	r.data1[0] = static_cast<cl_uchar>(hex.find(charLeading));
 	return r;
 }
 
 Mode Mode::range(const cl_uchar min, const cl_uchar max) {
 	Mode r;
 	r.name = "range";
-	r.mode = 3;
+	r.kernel = "profanity_score_range";
 	r.data1[0] = min;
 	r.data2[0] = max;
 	return r;
@@ -80,7 +81,7 @@ Mode Mode::numbers() {
 Mode Mode::leadingRange(const cl_uchar min, const cl_uchar max) {
 	Mode r;
 	r.name = "leadingrange";
-	r.mode = 4;
+	r.kernel = "profanity_score_leadingrange";
 	r.data1[0] = min;
 	r.data2[0] = max;
 	return r;
@@ -89,6 +90,6 @@ Mode Mode::leadingRange(const cl_uchar min, const cl_uchar max) {
 Mode Mode::mirror() {
 	Mode r;
 	r.name = "mirror";
-	r.mode = 5;
+	r.kernel = "profanity_score_mirror";
 	return r;
 }
