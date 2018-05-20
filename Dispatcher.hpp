@@ -51,20 +51,22 @@ class Dispatcher {
 			CLMemory<point> m_memPrecomp;
 			CLMemory<point> m_memPoints;
 			CLMemory<mp_number> m_memInverse;
-
 			CLMemory<result> m_memResult;
 
 			// Data parameters used in some modes
 			CLMemory<cl_uchar> m_memData1;
 			CLMemory<cl_uchar> m_memData2;
 
+			// Seed and round information
+			cl_ulong4 m_clSeed;
+			cl_ulong m_round;
+
 			// Speed sampling
 			SpeedSample m_speed;
 
-			cl_ulong4 m_clSeed;
-			bool m_seeded;
-
-			cl_ulong m_round;
+			// Initialization
+			size_t m_sizeInitialized;
+			cl_event m_eventFinished;
 		};
 
 	public:
@@ -76,7 +78,9 @@ class Dispatcher {
 
 	private:
 		void init();
-		void init(Device & d, cl_event & event);
+		void initBegin(Device & d);
+		void initContinue(Device & d);
+
 		void dispatch(Device & d);
 		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, const bool bSynchronous);
 		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, const bool bSynchronous);
