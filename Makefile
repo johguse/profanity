@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS=-c -std=c++11 -Wall -mmmx -O2
+CFLAGS=-c -std=c++11 -Wall -mmmx -O2 -mcmodel=large 
 CDEFINES=
 SOURCES=Dispatcher.cpp Mode.cpp precomp.cpp profanity.cpp SpeedSample.cpp
 OBJECTS=$(SOURCES:.cpp=.o)
@@ -9,7 +9,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 	LDFLAGS=-framework OpenCL
 else
-	LDFLAGS=-s -lOpenCL
+	LDFLAGS=-s -lOpenCL -mcmodel=large
 endif
 
 all: $(SOURCES) $(EXECUTABLE)
