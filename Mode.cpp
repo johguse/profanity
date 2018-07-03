@@ -1,4 +1,5 @@
 #include "Mode.hpp"
+#include <stdexcept>
 
 Mode::Mode() : score(0) {
 
@@ -17,6 +18,20 @@ Mode Mode::zeros() {
 	return r;
 }
 
+static std::string::size_type hexValue(char c) {
+	if (c >= 'A' && c <= 'F') {
+		c -= 'A' - 'a';
+	}
+
+	const std::string hex = "0123456789abcdef";
+	const std::string::size_type ret = hex.find(c);
+	if(ret == std::string::npos) {
+		throw std::runtime_error("bad hex value");
+	}
+
+	return ret;
+}
+
 Mode Mode::matching(const std::string strHex) {
 	Mode r;
 	r.name = "matching";
@@ -25,12 +40,11 @@ Mode Mode::matching(const std::string strHex) {
 	std::fill( r.data1, r.data1 + sizeof(r.data1), cl_uchar(0) );
 	std::fill( r.data2, r.data2 + sizeof(r.data2), cl_uchar(0) );
 
-	const std::string hex = "0123456789abcdef";
 	auto index = 0;
 
 	for( size_t i = 0; i < strHex.size(); i += 2 ) {
-		const auto indexHi = hex.find(strHex[i]);
-		const auto indexLo = i + 1 < strHex.size() ? hex.find(strHex[i+1]) : std::string::npos;
+		const auto indexHi = hexValue(strHex[i]);
+		const auto indexLo = i + 1 < strHex.size() ? hexValue(strHex[i+1]) : std::string::npos;
 
 		const auto valHi = (indexHi == std::string::npos) ? 0 : indexHi << 4;
 		const auto valLo = (indexLo == std::string::npos) ? 0 : indexLo;
@@ -48,12 +62,11 @@ Mode Mode::matching(const std::string strHex) {
 }
 
 Mode Mode::leading(const char charLeading) {
-	const std::string hex = "0123456789abcdef";
 
 	Mode r;
 	r.name = "leading";
 	r.kernel = "profanity_score_leading";
-	r.data1[0] = static_cast<cl_uchar>(hex.find(charLeading));
+	r.data1[0] = static_cast<cl_uchar>(hexValue(charLeading));
 	return r;
 }
 
