@@ -3,10 +3,16 @@
 
 #include <stdexcept>
 #include <fstream>
-#include <CL/cl.h>
 #include <string>
 #include <vector>
 #include <mutex>
+
+#if defined(__APPLE__) || defined(__MACOSX)
+#include <OpenCL/cl.h>
+#define clCreateCommandQueueWithProperties clCreateCommandQueue
+#else
+#include <CL/cl.h>
+#endif
 
 #include "SpeedSample.hpp"
 #include "CLMemory.hpp"

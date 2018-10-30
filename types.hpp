@@ -4,7 +4,11 @@
 /* The structs declared in this file should have size/alignment hints
  * to ensure that their representation is identical to that in OpenCL.
  */
+#if defined(__APPLE__) || defined(__MACOSX)
+#include <OpenCL/cl.h>
+#else
 #include <CL/cl.h>
+#endif
 
 #define MP_NWORDS 8
 

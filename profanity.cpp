@@ -9,8 +9,13 @@
 #include <map>
 #include <set>
 
+#if defined(__APPLE__) || defined(__MACOSX)
+#include <OpenCL/cl.h>
+#include <OpenCL/cl_ext.h> // Included to get topology to get an actual unique identifier per device
+#else
 #include <CL/cl.h>
 #include <CL/cl_ext.h> // Included to get topology to get an actual unique identifier per device
+#endif
 
 #include "Dispatcher.hpp"
 #include "ArgParser.hpp"
@@ -106,6 +111,9 @@ std::vector<std::string> getBinaries(cl_program & clProgram) {
 }
 
 unsigned int getUniqueDeviceIdentifier(const cl_device_id & deviceId) {
+#if defined(__APPLE__) || defined(__MACOSX)
+	return 0;
+#else
 	auto topology = clGetWrapper<cl_device_topology_amd>(clGetDeviceInfo, deviceId, CL_DEVICE_TOPOLOGY_AMD);
 	if (topology.raw.type == CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD) {
 		return (topology.pcie.bus << 16) + (topology.pcie.device << 8) + topology.pcie.function;
@@ -113,6 +121,7 @@ unsigned int getUniqueDeviceIdentifier(const cl_device_id & deviceId) {
 	else {
 		return 0;
 	}
+#endif
 }
 
 template <typename T> bool printResult(const T & t, const cl_int & err) {
