@@ -151,6 +151,7 @@ int main(int argc, char * * argv) {
 		bool bNoCache = false;
 		size_t inverseSize = 1023;
 		size_t inverseMultiple = 16400;
+        bool bMineContract = false;
 
 		argp.addSwitch('h', "help", bHelp);
 		argp.addSwitch('0', "benchmark", bModeBenchmark);
@@ -170,6 +171,7 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('n', "no-cache", bNoCache);
 		argp.addSwitch('i', "inverse-size", inverseSize);
 		argp.addSwitch('I', "inverse-multiple", inverseMultiple);
+        argp.addSwitch('c', "contract", bMineContract);
 
 		if (!argp.parse()) {
 			std::cout << "error: bad arguments, try again :<" << std::endl;
