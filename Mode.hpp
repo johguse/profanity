@@ -2,7 +2,12 @@
 #define HPP_MODE
 
 #include <string>
+
+#if defined(__APPLE__) || defined(__MACOSX)
+#include <OpenCL/cl.h>
+#else
 #include <CL/cl.h>
+#endif
 
 class Mode {
 	private:
