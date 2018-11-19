@@ -26,7 +26,7 @@ static std::string toHex(const uint8_t * const s, const size_t len) {
 	return r;
 }
 
-static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart) {
+static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score, const std::chrono::time_point<std::chrono::steady_clock> & timeStart, const Mode & mode) {
 	// Time delta
 	const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - timeStart).count();
 
@@ -48,7 +48,10 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	const std::string strPublic = toHex(r.foundHash, 20);
 
 	// Print
-	std::cout << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << " Public: 0x" << strPublic << std::endl;
+	std::cout << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
+
+	std::cout << mode.transformName();
+	std::cout << ": 0x" << strPublic << std::endl;
 }
 
 Dispatcher::OpenCLException::OpenCLException(const std::string s, const cl_int res) :
@@ -100,6 +103,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
 	m_kernelEnd(createKernel(clProgram, "profanity_end")),
 	m_kernelScore(createKernel(clProgram, mode.kernel)),
+	m_kernelTransform(createKernel(clProgram, mode.transformKernel())),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
 	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
@@ -217,7 +221,10 @@ void Dispatcher::initBegin(Device & d) {
 	d.m_memPoints.setKernelArg(d.m_kernelEnd, 0);
 	d.m_memInverse.setKernelArg(d.m_kernelEnd, 1);
 
-	// Kernel arguments - profanity_score_???
+	// Kernel arguments - profanity_transform_*
+	d.m_memInverse.setKernelArg(d.m_kernelTransform, 0);
+
+	// Kernel arguments - profanity_score_*
 	d.m_memInverse.setKernelArg(d.m_kernelScore, 0);
 	d.m_memResult.setKernelArg(d.m_kernelScore, 1);
 	d.m_memData1.setKernelArg(d.m_kernelScore, 2);
@@ -293,6 +300,7 @@ void Dispatcher::dispatch(Device & d) {
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize);
 	enqueueKernelDevice(d, d.m_kernelInversePost, m_size);
 	enqueueKernelDevice(d, d.m_kernelEnd, m_size);
+	enqueueKernelDevice(d, d.m_kernelTransform, m_size);
 	enqueueKernelDevice(d, d.m_kernelScore, m_size);
 
 	cl_event event;
@@ -320,7 +328,7 @@ void Dispatcher::handleResult(Device & d) {
 					m_quit = true;
 				}
 
-				printResult(d.m_clSeed, d.m_round, r, i, timeStart);
+				printResult(d.m_clSeed, d.m_round, r, i, timeStart, m_mode);
 			}
 
 			break;

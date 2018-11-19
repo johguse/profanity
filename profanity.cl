@@ -464,6 +464,7 @@ __kernel void profanity_end(
 		h.d[i+8] = bswap32( p.y.d[MP_WORDS - 1 - i] );
 	}
 	
+	h.d[16] ^= 0x01; // length 64
 	sha3_keccakf(&h);
 
 	pInverse[id].d[0] = h.d[3];
@@ -486,6 +487,35 @@ void profanity_result_update( const size_t id, __global const uchar * const hash
 			}
 		}
 	}
+}
+
+__kernel void profanity_transform_identity(__global mp_number * const pInverse) {
+}
+
+__kernel void profanity_transform_contract(__global mp_number * const pInverse) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+
+	ethhash h;
+	for( int i = 0; i < 50; ++i ) {
+		h.d[i] = 0;
+	}
+	// set up keccak(0xd6, 0x94, address, 0x80)
+	h.b[0] = 214;
+	h.b[1] = 148;
+	for (int i = 0; i < 20; i++) {
+		h.b[i+2] = hash[i];
+	}
+	h.b[22] = 128;
+
+	h.b[23] ^= 0x01; // length 23
+	sha3_keccakf(&h);
+
+	pInverse[id].d[0] = h.d[3];
+	pInverse[id].d[1] = h.d[4];
+	pInverse[id].d[2] = h.d[5];
+	pInverse[id].d[3] = h.d[6];
+	pInverse[id].d[4] = h.d[7];
 }
 
 __kernel void profanity_score_benchmark(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax ) {

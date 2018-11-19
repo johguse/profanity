@@ -38,7 +38,6 @@ __constant int keccakf_piln[24] = {
 void sha3_keccakf(ethhash * const pHash)
 {
 	ulong * const st = &pHash->q;
-	pHash->d[16] ^= 0x01;
 	pHash->d[33] ^= 0x80000000;
 
     // variables

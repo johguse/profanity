@@ -9,6 +9,12 @@
 #include <CL/cl.h>
 #endif
 
+enum HashTarget {
+	ADDRESS,
+	CONTRACT,
+	HASH_TARGET_COUNT
+};
+
 class Mode {
 	private:
 		Mode();
@@ -26,7 +32,14 @@ class Mode {
 		static Mode numbers();
 
 		std::string name;
+
 		std::string kernel;
+
+		HashTarget target;
+		// kernel transform fn name
+		std::string transformKernel() const;
+		// Address, Contract, ...
+		std::string transformName() const;
 
 		cl_uchar data1[20];
 		cl_uchar data2[20];

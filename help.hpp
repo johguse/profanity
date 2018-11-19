@@ -18,6 +18,8 @@ usage: ./profanity [OPTIONS]
     --matching <hex string> Score on hashes matching given hex string.
 
   Advanced modes:
+    --contract              Instead of account address, score the contract
+                            address created by the account's zeroth transaction.
     --leading-range         Scores on hashes leading with characters within
                             given range.
     --range                 Scores on hashes having characters within given
@@ -46,6 +48,7 @@ usage: ./profanity [OPTIONS]
     ./profanity --leading-range -m 0 -M 1
     ./profanity --leading-range -m 10 -M 12
     ./profanity --range -m 0 -M 1
+    ./profanity --contract --leading 0
 
   About:
     profanity is a vanity address generator for Ethereum that utilizes
