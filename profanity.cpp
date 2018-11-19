@@ -17,6 +17,9 @@
 #include <CL/cl_ext.h> // Included to get topology to get an actual unique identifier per device
 #endif
 
+#define CL_DEVICE_PCI_BUS_ID_NV  0x4008
+#define CL_DEVICE_PCI_SLOT_ID_NV 0x4009
+
 #include "Dispatcher.hpp"
 #include "ArgParser.hpp"
 #include "Mode.hpp"
@@ -111,17 +114,15 @@ std::vector<std::string> getBinaries(cl_program & clProgram) {
 }
 
 unsigned int getUniqueDeviceIdentifier(const cl_device_id & deviceId) {
-#if defined(__APPLE__) || defined(__MACOSX)
-	return 0;
-#else
+#if defined(CL_DEVICE_TOPOLOGY_AMD)
 	auto topology = clGetWrapper<cl_device_topology_amd>(clGetDeviceInfo, deviceId, CL_DEVICE_TOPOLOGY_AMD);
 	if (topology.raw.type == CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD) {
 		return (topology.pcie.bus << 16) + (topology.pcie.device << 8) + topology.pcie.function;
 	}
-	else {
-		return 0;
-	}
 #endif
+	cl_int bus_id = clGetWrapper<cl_int>(clGetDeviceInfo, deviceId, CL_DEVICE_PCI_BUS_ID_NV);
+	cl_int slot_id = clGetWrapper<cl_int>(clGetDeviceInfo, deviceId, CL_DEVICE_PCI_SLOT_ID_NV);
+	return (bus_id << 16) + slot_id;
 }
 
 template <typename T> bool printResult(const T & t, const cl_int & err) {
