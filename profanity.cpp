@@ -9,8 +9,13 @@
 #include <map>
 #include <set>
 
+#if defined(__APPLE__) || defined(__MACOSX)
+#include <OpenCL/cl.h>
+#include <OpenCL/cl_ext.h> // Included to get topology to get an actual unique identifier per device
+#else
 #include <CL/cl.h>
 #include <CL/cl_ext.h> // Included to get topology to get an actual unique identifier per device
+#endif
 
 #include "Dispatcher.hpp"
 #include "ArgParser.hpp"
