@@ -497,6 +497,9 @@ __kernel void profanity_transform_contract(__global mp_number * const pInverse) 
 
 	// set up keccak(0xd6, 0x94, address, 0x80)
 	ethhash h;
+	for( int i = 0; i < 50; ++i ) {
+		h.d[i] = 0;
+	}
 	h.b[0] = 214;
 	h.b[1] = 148;
 	for (int i = 0; i < 20; i++) {
