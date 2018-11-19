@@ -506,7 +506,13 @@ __kernel void profanity_transform_contract(__global mp_number * const pInverse) 
 		h.b[i+2] = hash[i];
 	}
 	h.b[22] = 128;
+	// revert keccak size optimization
+	h.b[23] ^= 0x01;
+	h.d[16] ^= 0x01;
+
+
 	sha3_keccakf(&h);
+
 	pInverse[id].d[0] = h.d[3];
 	pInverse[id].d[1] = h.d[4];
 	pInverse[id].d[2] = h.d[5];
