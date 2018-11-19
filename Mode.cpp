@@ -78,6 +78,28 @@ Mode Mode::numbers() {
 	return r;
 }
 
+std::string Mode::transformKernel() const {
+	switch (this->target) {
+		case ADDRESS:
+			return "profanity_transform_identity";
+		case CONTRACT:
+			return "profanity_transform_contract";
+		default:
+			throw "No kernel for target";
+	}
+}
+
+std::string Mode::transformName() const {
+	switch (this->target) {
+		case ADDRESS:
+			return "Address";
+		case CONTRACT:
+			return "Contract";
+		default:
+			throw "No name for target";
+	}
+}
+
 Mode Mode::leadingRange(const cl_uchar min, const cl_uchar max) {
 	Mode r;
 	r.name = "leadingrange";
