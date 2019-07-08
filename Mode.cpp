@@ -18,13 +18,18 @@ Mode Mode::zeros() {
 	return r;
 }
 
-static std::string::size_type hexValue(char c) {
+static std::string::size_type hexValueNoException(char c) {
 	if (c >= 'A' && c <= 'F') {
 		c -= 'A' - 'a';
 	}
 
 	const std::string hex = "0123456789abcdef";
 	const std::string::size_type ret = hex.find(c);
+	return ret;
+}
+
+static std::string::size_type hexValue(char c) {
+	const std::string::size_type ret = hexValueNoException(c);
 	if(ret == std::string::npos) {
 		throw std::runtime_error("bad hex value");
 	}
@@ -41,10 +46,10 @@ Mode Mode::matching(const std::string strHex) {
 	std::fill( r.data2, r.data2 + sizeof(r.data2), cl_uchar(0) );
 
 	auto index = 0;
-
+	
 	for( size_t i = 0; i < strHex.size(); i += 2 ) {
-		const auto indexHi = hexValue(strHex[i]);
-		const auto indexLo = i + 1 < strHex.size() ? hexValue(strHex[i+1]) : std::string::npos;
+		const auto indexHi = hexValueNoException(strHex[i]);
+		const auto indexLo = i + 1 < strHex.size() ? hexValueNoException(strHex[i+1]) : std::string::npos;
 
 		const auto valHi = (indexHi == std::string::npos) ? 0 : indexHi << 4;
 		const auto valLo = (indexLo == std::string::npos) ? 0 : indexLo;
