@@ -159,8 +159,8 @@ int main(int argc, char * * argv) {
 		size_t worksizeLocal = 64;
 		size_t worksizeMax = 1048576;
 		bool bNoCache = false;
-		size_t inverseSize = 1023;
-		size_t inverseMultiple = 16400;
+		size_t inverseSize = 256;
+		size_t inverseMultiple = 65536;
 		bool bMineContract = false;
 
 		argp.addSwitch('h', "help", bHelp);
