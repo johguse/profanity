@@ -68,7 +68,12 @@ void Dispatcher::OpenCLException::OpenCLException::throwIfError(const std::strin
 }
 
 cl_command_queue Dispatcher::Device::createQueue(cl_context & clContext, cl_device_id & clDeviceId) {
+	// nVidia CUDA Toolkit 10.1 only supports OpenCL 1.2 so we revert back to older functions for compatability
+#ifdef CL_VERSION_2_0
 	const cl_command_queue ret = clCreateCommandQueueWithProperties(clContext, clDeviceId, NULL, NULL);
+#else
+	const cl_command_queue ret = clCreateCommandQueue(clContext, clDeviceId, NULL, NULL);
+#endif
 	return ret == NULL ? throw std::runtime_error("failed to create command queue") : ret;
 }
 
@@ -78,6 +83,14 @@ cl_kernel Dispatcher::Device::createKernel(cl_program & clProgram, const std::st
 }
 
 cl_ulong4 Dispatcher::Device::createSeed() {
+#ifdef PROFANITY_DEBUG
+	cl_ulong4 r;
+	r.s[0] = 1;
+	r.s[1] = 1;
+	r.s[2] = 1;
+	r.s[3] = 1;
+	return r;
+#else
 	// Randomize private keys
 	std::random_device rd;
 	std::mt19937_64 eng(rd());
@@ -89,6 +102,7 @@ cl_ulong4 Dispatcher::Device::createSeed() {
 	r.s[2] = distr(eng);
 	r.s[3] = distr(eng);
 	return r;
+#endif
 }
 
 Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_program & clProgram, cl_device_id clDeviceId, const size_t worksizeLocal, const size_t size, const size_t index, const Mode & mode) :
@@ -107,7 +121,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
 	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
-	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, 40),
+	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, PROFANITY_MAX_SCORE + 1),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_clSeed(createSeed()),
@@ -249,10 +263,18 @@ void Dispatcher::initContinue(Device & d) {
 		const auto resEnqueue = clEnqueueNDRangeKernel(d.m_clQueue, d.m_kernelBegin, 1, &d.m_sizeInitialized, &sizeRun, NULL, 0, NULL, &event);
 		OpenCLException::throwIfError("kernel queueing failed during initilization", resEnqueue);
 
-		const auto resCallback = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
-		OpenCLException::throwIfError("failed to set custom callback during initialization", resCallback);
+		// See: https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/clSetEventCallback.html
+		// If an application needs to wait for completion of a routine from the above list in a callback, please use the non-blocking form of the function, and
+		// assign a completion callback to it to do the remainder of your work. Note that when a callback (or other code) enqueues commands to a command-queue,
+		// the commands are not required to begin execution until the queue is flushed. In standard usage, blocking enqueue calls serve this role by implicitly
+		// flushing the queue. Since blocking calls are not permitted in callbacks, those callbacks that enqueue commands on a command queue should either call
+		// clFlush on the queue before returning or arrange for clFlush to be called later on another thread.
+		clFlush(d.m_clQueue); 
 
 		d.m_sizeInitialized += sizeRun;
+
+		const auto resCallback = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
+		OpenCLException::throwIfError("failed to set custom callback during initialization", resCallback);
 	} else {
 		// Printing one whole string at once helps in avoiding garbled output when executed in parallell
 		const std::string strOutput = "  GPU" + toString(d.m_index) + " initialized";
@@ -312,12 +334,14 @@ void Dispatcher::dispatch(Device & d) {
 
 	const auto res = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
 	OpenCLException::throwIfError("failed to set custom callback", res);
+
+	clFlush(d.m_clQueue);
 }
 
 void Dispatcher::handleResult(Device & d) {
 	++d.m_round;
 
-	for (auto i = 40 - 1; i > m_clScoreMax; --i) {
+	for (auto i = PROFANITY_MAX_SCORE; i > m_clScoreMax; --i) {
 		result & r = d.m_memResult[i];
 
 		if (r.found > 0 && i >= d.m_clScoreMax) {
