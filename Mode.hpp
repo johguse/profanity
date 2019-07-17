@@ -30,6 +30,7 @@ class Mode {
 		static Mode zeros();
 		static Mode letters();
 		static Mode numbers();
+		static Mode doubles();
 
 		std::string name;
 

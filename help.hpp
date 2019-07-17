@@ -12,6 +12,7 @@ usage: ./profanity [OPTIONS]
     --letters               Score on letters anywhere in hash.
     --numbers               Score on numbers anywhere in hash.
     --mirror                Score on mirroring from center.
+    --leading-doubles       Score on hashes leading with hexadecimal pairs
 
   Modes with arguments:
     --leading <single hex>  Score on hashes leading with given hex character.
@@ -35,11 +36,11 @@ usage: ./profanity [OPTIONS]
 
   Tweaking:
     -w, --work <size>       Set OpenCL local work size. [default = 64]
-    -W, --work-max <size>   Set OpenCL maximum work size. [default = 1048576]
+    -W, --work-max <size>   Set OpenCL maximum work size. [default = -i * -I]
     -i, --inverse-size      Set size of modular inverses to calculate in one
-                            work item. [default = 256]
+                            work item. [default = 255]
     -I, --inverse-multiple  Set how many above work items will run in
-                            parallell. [default = 65536]
+                            parallell. [default = 16384]
 
   Examples:
     ./profanity --leading f

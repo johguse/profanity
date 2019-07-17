@@ -19,6 +19,7 @@ usage: ./profanity [OPTIONS]
     --letters               Score on letters anywhere in hash.
     --numbers               Score on numbers anywhere in hash.
     --mirror                Score on mirroring from center.
+    --leading-doubles       Score on hashes leading with hexadecimal pairs
 
   Modes with arguments:
     --leading <single hex>  Score on hashes leading with given hex character.
@@ -38,15 +39,15 @@ usage: ./profanity [OPTIONS]
 
   Device control:
     -s, --skip <index>      Skip device given by index.
-    -n, --no-cache           Don't load cached pre-compiled version of kernel.
+    -n, --no-cache          Don't load cached pre-compiled version of kernel.
 
   Tweaking:
     -w, --work <size>       Set OpenCL local work size. [default = 64]
-    -W, --work-max <size>   Set OpenCL maximum work size. [default = 1048576]
+    -W, --work-max <size>   Set OpenCL maximum work size. [default = -i * -I]
     -i, --inverse-size      Set size of modular inverses to calculate in one
-                            work item. [default = 256]
+                            work item. [default = 255]
     -I, --inverse-multiple  Set how many above work items will run in
-                            parallell. [default = 65536]
+                            parallell. [default = 16384]
 
   Examples:
     ./profanity --leading f
@@ -69,10 +70,12 @@ usage: ./profanity [OPTIONS]
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters|Version
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 |RX VEGA56|1408|1100|YES|146 MH/s| ~29 s | 1.1x
+|GTX 1070 OC|1950|4450|NO|120.0 MH/s| ~36s | 1.3x
+|GTX 1070|1750|4000|NO|106.0 MH/s| ~41s | 1.3x
 |R9 290|1150|1400|NO|100 MH/s| ~43 s | 1.1x
 |RX 480|1328|2000|YES|97 MH/s| ~45 s| 1.2x
 |RX 480|1266|2000|YES|92 MH/s| ~47 s| 1.2x
 |RX 580|1366|1750|YES|92 MH/s| ~47 s| 1.2x
 |R9 290|1040|1300|NO|91 MH/s| ~47 s | 1.1x
 |RX 470|1216|1750|YES|73 MH/s| ~59s | 1.2x
-|GTX 1070| - | - | NO | 26.0 MH/s | ~166s | 1.2x
+

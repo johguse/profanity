@@ -153,14 +153,15 @@ int main(int argc, char * * argv) {
 		bool bModeLeadingRange = false;
 		bool bModeRange = false;
 		bool bModeMirror = false;
+		bool bModeDoubles = false;
 		int rangeMin = 0;
 		int rangeMax = 0;
 		std::vector<size_t> vDeviceSkipIndex;
 		size_t worksizeLocal = 64;
-		size_t worksizeMax = 1048576;
+		size_t worksizeMax = 0; // Will be automatically determined later if not overriden by user
 		bool bNoCache = false;
-		size_t inverseSize = 256;
-		size_t inverseMultiple = 65536;
+		size_t inverseSize = 255;
+		size_t inverseMultiple = 16384;
 		bool bMineContract = false;
 
 		argp.addSwitch('h', "help", bHelp);
@@ -173,6 +174,7 @@ int main(int argc, char * * argv) {
 		argp.addSwitch('6', "leading-range", bModeLeadingRange);
 		argp.addSwitch('7', "range", bModeRange);
 		argp.addSwitch('8', "mirror", bModeMirror);
+		argp.addSwitch('9', "leading-doubles", bModeDoubles);
 		argp.addSwitch('m', "min", rangeMin);
 		argp.addSwitch('M', "max", rangeMax);
 		argp.addMultiSwitch('s', "skip", vDeviceSkipIndex);
@@ -212,6 +214,8 @@ int main(int argc, char * * argv) {
 			mode = Mode::range(rangeMin, rangeMax);
 		} else if(bModeMirror) {
 			mode = Mode::mirror();
+		} else if (bModeDoubles) {
+			mode = Mode::doubles();
 		} else {
 			std::cout << g_strHelp << std::endl;
 			return 0;
@@ -307,7 +311,7 @@ int main(int argc, char * * argv) {
 
 		// Build the program
 		std::cout << "  Building program..." << std::flush;
-		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize);
+		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize) + " -D PROFANITY_MAX_SCORE=" + toString(PROFANITY_MAX_SCORE);
 		if (printResult(clBuildProgram(clProgram, vDevices.size(), vDevices.data(), strBuildOptions.c_str(), NULL, NULL))) {
 #ifdef PROFANITY_DEBUG
 			std::cout << std::endl;
@@ -337,7 +341,7 @@ int main(int argc, char * * argv) {
 
 		std::cout << std::endl;
 
-		Dispatcher d(clContext, clProgram, mode, worksizeMax, inverseSize, inverseMultiple, 0);
+		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, 0);
 		for (auto & i : vDevices) {
 			d.addDevice(i, worksizeLocal, mDeviceIndex[i]);
 		}

@@ -48,7 +48,8 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	const std::string strPublic = toHex(r.foundHash, 20);
 
 	// Print
-	std::cout << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
+	const std::string strVT100ClearLine = "\33[2K\r";
+	std::cout << strVT100ClearLine << "  Time: " << std::setw(5) << seconds << "s Score: " << std::setw(2) << (int) score << " Private: 0x" << strPrivate << ' ';
 
 	std::cout << mode.transformName();
 	std::cout << ": 0x" << strPublic << std::endl;
@@ -116,8 +117,8 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_kernelInverse(createKernel(clProgram, "profanity_inverse_multiple")),
 	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
 	m_kernelEnd(createKernel(clProgram, "profanity_end")),
-	m_kernelScore(createKernel(clProgram, mode.kernel)),
 	m_kernelTransform(createKernel(clProgram, mode.transformKernel())),
+	m_kernelScore(createKernel(clProgram, mode.kernel)),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
 	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
@@ -181,7 +182,7 @@ void Dispatcher::run() {
 
 void Dispatcher::init() {
 	std::cout << "Initializing devices..." << std::endl;
-	std::cout << "  This can take a minute or two. The number of objects initialized on each" << std::endl;
+	std::cout << "  This should take less than a minute. The number of objects initialized on each" << std::endl;
 	std::cout << "  device is equal to inverse-size * inverse-multiple. To lower" << std::endl;
 	std::cout << "  initialization time (and memory footprint) I suggest lowering the" << std::endl;
 	std::cout << "  inverse-multiple first. You can do this via the -I switch. Do note that" << std::endl;
@@ -308,8 +309,7 @@ void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel,
 void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, const bool bOneAtATime = false) {
 	try {
 		enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal, bOneAtATime);
-	}
-	catch ( OpenCLException & e ) {
+	} catch ( OpenCLException & e ) {
 		// If local work size is invalid, abandon it and let implementation decide
 		if ((e.m_res == CL_INVALID_WORK_GROUP_SIZE || e.m_res == CL_INVALID_WORK_ITEM_SIZE) && d.m_worksizeLocal != 0) {
 			std::cout << std::endl << "warning: local work size abandoned on GPU" << d.m_index << std::endl;

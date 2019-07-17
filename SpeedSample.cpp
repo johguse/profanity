@@ -12,12 +12,17 @@ SpeedSample::~SpeedSample() {
 }
 
 double SpeedSample::getSpeed() const {
-	double speed = 0;
-	for( auto & v : m_lSpeeds) {
-		speed += v / m_lSpeeds.size();
-	}
+	auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now() - m_lastTime).count();
+	if (delta > 5000) {
+		return 0;
+	} else {
+		double speed = 0;
+		for (auto & v : m_lSpeeds) {
+			speed += v / m_lSpeeds.size();
+		}
 
-	return speed;
+		return speed;
+	}
 }
 
 void SpeedSample::sample(const double V) {

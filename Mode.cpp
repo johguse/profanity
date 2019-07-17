@@ -133,3 +133,10 @@ Mode Mode::mirror() {
 	r.kernel = "profanity_score_mirror";
 	return r;
 }
+
+Mode Mode::doubles() {
+	Mode r;
+	r.name = "doubles";
+	r.kernel = "profanity_score_doubles";
+	return r;
+}

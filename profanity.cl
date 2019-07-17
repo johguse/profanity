@@ -292,6 +292,10 @@ void mp_mod_inverse( mp_number * const r ) {
 		extraC -= mp_sub_mod(&C);
 	}
 	
+
+
+
+
 	v = mod;
 	mp_sub(r, &v, &C);
 }
@@ -375,50 +379,77 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 
 	pPoints[id] = p;
 
-	for( uchar i = 0; i < 40; ++i ) {
+	for( uchar i = 0; i < PROFANITY_MAX_SCORE + 1; ++i ) {
 		pResult[i].found = 0;
 	}
 }
 
 __kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
+
 	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
 	
-	mp_number inv;
-	mp_number copy; // Optimize this later
+	mp_number copy1, copy2, copy3;
 	mp_number buffer[PROFANITY_INVERSE_SIZE];
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
 
-	copy = pPoints[id].x;
-	mp_mod_sub_gx( &copy, &copy );
-	buffer[0] = copy;
-	pInverse[0] = copy;
+	buffer[0] = pPoints[id].x;
+	mp_mod_sub_gx( &buffer[0], &buffer[0]);
+	pInverse[0] = buffer[0];
 
 	for( uint i = 1; i < PROFANITY_INVERSE_SIZE; ++i ) {
-		copy = pPoints[id+i].x;
-		mp_mod_sub_gx( &copy, &copy );
-		pInverse[id+i] = copy;
-		mp_mul_mont( &buffer[i], &buffer[i-1], &copy );
+		buffer[i] = pPoints[id + i].x;
+		mp_mod_sub_gx(&buffer[i], &buffer[i]);
+		pInverse[id + i] = buffer[i];
+		mp_mul_mont(&buffer[i], &buffer[i - 1], &buffer[i]);
 	}
 
 	// mp_mod_inverse(aR) -> (aR)^-1 
 	// mp_mul_mont(x,y) -> x * y * R^-1
 	// mp_mul_mont( (aR)^-1, R^3 ) -> (aR)^-1 * R^3 * R^-1 = a^-1 * R
-	// Also: Compiler really fucks the below up unless we use a temporary variable. Why?!
-	inv = buffer[PROFANITY_INVERSE_SIZE-1];
-	mp_mod_inverse( &inv );
-	mp_mul_mont(&inv, &inv, &mont_rrr); 
+	copy1 = buffer[PROFANITY_INVERSE_SIZE - 1];
+	mp_mod_inverse( &copy1 );
+	mp_mul_mont(&copy1, &copy1, &mont_rrr); 
 
 	for( uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i ) {
-		copy = pInverse[id+i];
-		mp_mul_mont( &copy, &copy, &inv);
+		copy2 = pInverse[id + i];
 
-		mp_mul_mont( &buffer[i], &buffer[i-1], &inv);
-		pInverse[id+i] = buffer[i];
-		inv = copy;
+		mp_mul_mont(&copy3, &buffer[i - 1], &copy1);
+		mp_mul_mont(&copy1, &copy2, &copy1);
+		pInverse[id + i] = copy3;
 	}
 
-	pInverse[id] = inv;
+	pInverse[id] = copy1;
 }
+
+/*
+// Unrolled version of the inversion algorithm where PROFANITY_INVERSE_SIZE = 64.
+// This one gave horribly performance on my GTX 1070 and massively increased build time.
+// On an RX480 it gave worse performance, 64MH/s vs 74MH/s.
+// I'll leave it as a multi-line comment here for possible future experimentation on other platforms.
+
+#define INVERSE_BEGIN(B) B = pPoints[id].x; mp_mod_sub_gx(&B, &B); pInverse[0] = B;
+#define INVERSE(B, BP, offset) B = pPoints[id+offset].x; mp_mod_sub_gx(&B, &B); pInverse[id+offset] = B; mp_mul_mont(&B, &BP, &B);
+#define INVERSE_REV(B, offset) copy2 = pInverse[id + offset]; mp_mul_mont(&copy3, &B, &copy1); mp_mul_mont(&copy1, &copy2, &copy1); pInverse[id + offset] = copy3;
+#define INVERSE_REV_END() pInverse[id] = copy1;
+
+__kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
+	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
+
+	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
+	mp_number copy1, copy2, copy3;
+	mp_number b00, b01, b02, b03, b04, b05, b06, b07, b08, b09, b10, b11, b12, b13, b14, b15, b16, b17, b18, b19, b20, b21, b22, b23, b24, b25, b26, b27, b28, b29, b30, b31, b32, b33, b34, b35, b36, b37, b38, b39, b40, b41, b42, b43, b44, b45, b46, b47, b48, b49, b50, b51, b52, b53, b54, b55, b56, b57, b58, b59, b60, b61, b62, b63;
+	
+	INVERSE_BEGIN(b00); INVERSE(b01, b00, 1); INVERSE(b02, b01, 2); INVERSE(b03, b02, 3); INVERSE(b04, b03, 4); INVERSE(b05, b04, 5); INVERSE(b06, b05, 6); INVERSE(b07, b06, 7); INVERSE(b08, b07, 8); INVERSE(b09, b08, 9); INVERSE(b10, b09, 10); INVERSE(b11, b10, 11); INVERSE(b12, b11, 12); INVERSE(b13, b12, 13); INVERSE(b14, b13, 14); INVERSE(b15, b14, 15); INVERSE(b16, b15, 16); INVERSE(b17, b16, 17); INVERSE(b18, b17, 18); INVERSE(b19, b18, 19); INVERSE(b20, b19, 20); INVERSE(b21, b20, 21); INVERSE(b22, b21, 22); INVERSE(b23, b22, 23); INVERSE(b24, b23, 24); INVERSE(b25, b24, 25); INVERSE(b26, b25, 26); INVERSE(b27, b26, 27); INVERSE(b28, b27, 28); INVERSE(b29, b28, 29); INVERSE(b30, b29, 30); INVERSE(b31, b30, 31); INVERSE(b32, b31, 32); INVERSE(b33, b32, 33); INVERSE(b34, b33, 34); INVERSE(b35, b34, 35); INVERSE(b36, b35, 36); INVERSE(b37, b36, 37); INVERSE(b38, b37, 38); INVERSE(b39, b38, 39); INVERSE(b40, b39, 40); INVERSE(b41, b40, 41); INVERSE(b42, b41, 42); INVERSE(b43, b42, 43); INVERSE(b44, b43, 44); INVERSE(b45, b44, 45); INVERSE(b46, b45, 46); INVERSE(b47, b46, 47); INVERSE(b48, b47, 48); INVERSE(b49, b48, 49); INVERSE(b50, b49, 50); INVERSE(b51, b50, 51); INVERSE(b52, b51, 52); INVERSE(b53, b52, 53); INVERSE(b54, b53, 54); INVERSE(b55, b54, 55); INVERSE(b56, b55, 56); INVERSE(b57, b56, 57); INVERSE(b58, b57, 58); INVERSE(b59, b58, 59); INVERSE(b60, b59, 60); INVERSE(b61, b60, 61); INVERSE(b62, b61, 62); INVERSE(b63, b62, 63);
+
+	// Middle step
+	copy1 = b63;
+	mp_mod_inverse(&copy1);
+	mp_mul_mont(&copy1, &copy1, &mont_rrr);
+
+	// Reverse
+	INVERSE_REV(b62, 63); INVERSE_REV(b61, 62); INVERSE_REV(b60, 61); INVERSE_REV(b59, 60); INVERSE_REV(b58, 59); INVERSE_REV(b57, 58); INVERSE_REV(b56, 57); INVERSE_REV(b55, 56); INVERSE_REV(b54, 55); INVERSE_REV(b53, 54); INVERSE_REV(b52, 53); INVERSE_REV(b51, 52); INVERSE_REV(b50, 51); INVERSE_REV(b49, 50); INVERSE_REV(b48, 49); INVERSE_REV(b47, 48); INVERSE_REV(b46, 47); INVERSE_REV(b45, 46); INVERSE_REV(b44, 45); INVERSE_REV(b43, 44); INVERSE_REV(b42, 43); INVERSE_REV(b41, 42); INVERSE_REV(b40, 41); INVERSE_REV(b39, 40); INVERSE_REV(b38, 39); INVERSE_REV(b37, 38); INVERSE_REV(b36, 37); INVERSE_REV(b35, 36); INVERSE_REV(b34, 35); INVERSE_REV(b33, 34); INVERSE_REV(b32, 33); INVERSE_REV(b31, 32); INVERSE_REV(b30, 31); INVERSE_REV(b29, 30); INVERSE_REV(b28, 29); INVERSE_REV(b27, 28); INVERSE_REV(b26, 27); INVERSE_REV(b25, 26); INVERSE_REV(b24, 25); INVERSE_REV(b23, 24); INVERSE_REV(b22, 23); INVERSE_REV(b21, 22); INVERSE_REV(b20, 21); INVERSE_REV(b19, 20); INVERSE_REV(b18, 19); INVERSE_REV(b17, 18); INVERSE_REV(b16, 17); INVERSE_REV(b15, 16); INVERSE_REV(b14, 15); INVERSE_REV(b13, 14); INVERSE_REV(b12, 13); INVERSE_REV(b11, 12); INVERSE_REV(b10, 11); INVERSE_REV(b09, 10); INVERSE_REV(b08, 9); INVERSE_REV(b07, 8); INVERSE_REV(b06, 7); INVERSE_REV(b05, 6); INVERSE_REV(b04, 5); INVERSE_REV(b03, 4); INVERSE_REV(b02, 3); INVERSE_REV(b01, 2); INVERSE_REV(b00, 1); INVERSE_REV_END();
+}
+*/
 
 __kernel void profanity_inverse_post(__global point * const pPoints, __global const mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
@@ -443,9 +474,7 @@ __kernel void profanity_inverse_post(__global point * const pPoints, __global co
 	pPoints[id] = n;
 }
 
-__kernel void profanity_end(
-	__global point * const pPoints,
-	__global mp_number * const pInverse ) {
+__kernel void profanity_end(__global point * const pPoints,	__global mp_number * const pInverse ) {
 	const size_t id = get_global_id(0);
 	ethhash h;
 	point p = pPoints[id];
@@ -459,12 +488,24 @@ __kernel void profanity_end(
 		h.d[i] = 0;
 	}
 
-	for( int i = 0; i < MP_WORDS; ++i ) {
-		h.d[i] = bswap32( p.x.d[MP_WORDS - 1 - i] );
-		h.d[i+8] = bswap32( p.y.d[MP_WORDS - 1 - i] );
-	}
-	
+	h.d[0] = bswap32(p.x.d[MP_WORDS - 1]);
+	h.d[1] = bswap32(p.x.d[MP_WORDS - 2]);
+	h.d[2] = bswap32(p.x.d[MP_WORDS - 3]);
+	h.d[3] = bswap32(p.x.d[MP_WORDS - 4]);
+	h.d[4] = bswap32(p.x.d[MP_WORDS - 5]);
+	h.d[5] = bswap32(p.x.d[MP_WORDS - 6]);
+	h.d[6] = bswap32(p.x.d[MP_WORDS - 7]);
+	h.d[7] = bswap32(p.x.d[MP_WORDS - 8]);
+	h.d[8] = bswap32(p.y.d[MP_WORDS - 1]);
+	h.d[9] = bswap32(p.y.d[MP_WORDS - 2]);
+	h.d[10] = bswap32(p.y.d[MP_WORDS - 3]);
+	h.d[11] = bswap32(p.y.d[MP_WORDS - 4]);
+	h.d[12] = bswap32(p.y.d[MP_WORDS - 5]);
+	h.d[13] = bswap32(p.y.d[MP_WORDS - 6]);
+	h.d[14] = bswap32(p.y.d[MP_WORDS - 7]);
+	h.d[15] = bswap32(p.y.d[MP_WORDS - 8]);
 	h.d[16] ^= 0x01; // length 64
+
 	sha3_keccakf(&h);
 
 	pInverse[id].d[0] = h.d[3];
@@ -509,7 +550,7 @@ __kernel void profanity_transform_contract(__global mp_number * const pInverse) 
 	h.b[22] = 128;
 
 	h.b[23] ^= 0x01; // length 23
-	sha3_keccakf(&h);
+	//sha3_keccakf(&h);
 
 	pInverse[id].d[0] = h.d[3];
 	pInverse[id].d[1] = h.d[4];
@@ -631,6 +672,22 @@ __kernel void profanity_score_mirror(__global mp_number * const pInverse, __glob
 		}
 
 		++score;
+	}
+
+	profanity_result_update(id, hash, pResult, score, scoreMax);
+}
+
+__kernel void profanity_score_doubles(__global mp_number * const pInverse, __global result * const pResult, __constant const uchar * const data1, __constant const uchar * const data2, const uchar scoreMax) {
+	const size_t id = get_global_id(0);
+	__global const uchar * const hash = pInverse[id].d;
+	int score = 0;
+
+	for (int i = 0; i < 20; ++i) {
+		if( (hash[i] == 0x00) || (hash[i] == 0x11) || (hash[i] == 0x22) || (hash[i] == 0x33) || (hash[i] == 0x44) || (hash[i] == 0x55) || (hash[i] == 0x66) || (hash[i] == 0x77) || (hash[i] == 0x88) || (hash[i] == 0x99) || (hash[i] == 0xAA) || (hash[i] == 0xBB) || (hash[i] == 0xCC) || (hash[i] == 0xDD) || (hash[i] == 0xEE) || (hash[i] == 0xFF) ) {
+			++score;
+		} else {
+			break;
+		}
 	}
 
 	profanity_result_update(id, hash, pResult, score, scoreMax);
