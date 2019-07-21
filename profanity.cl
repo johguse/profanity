@@ -550,7 +550,7 @@ __kernel void profanity_transform_contract(__global mp_number * const pInverse) 
 	h.b[22] = 128;
 
 	h.b[23] ^= 0x01; // length 23
-	//sha3_keccakf(&h);
+	sha3_keccakf(&h);
 
 	pInverse[id].d[0] = h.d[3];
 	pInverse[id].d[1] = h.d[4];
