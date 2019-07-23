@@ -13,6 +13,9 @@ typedef struct {
 __constant mp_number mod = { { 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
 __constant mp_word mPrime = 0xd2253531;
 
+__constant mp_number tripleNegativeGx = { {0x26859699, 0x7a5d74ef, 0x82cacb6c, 0x96a58406, 0x6408c82b, 0x392225bf, 0x44e62226, 0x337a4d34} };
+__constant mp_number negativeGy = { {0x2c24504d, 0x4ea1592c, 0xe0e239b2, 0x7203a2a2, 0x53e63ec9, 0x8f494a65, 0x2b5a7d29, 0x30c07ae0} };
+
 mp_word mp_sub( mp_number * const r, const mp_number * const a, const mp_number * const b ) {
 	mp_word t, c = 0;
 	
@@ -58,10 +61,26 @@ void mp_mod_sub( mp_number * const r, const mp_number * const a, const mp_number
 	}
 }
 
-void mp_mod_sub_gx( mp_number * const r, const mp_number * const a) {
-    // gx = {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643}
-	//point g = { {  }, { {0xd3dbabe2, 0xb15ea6d2, 0x1f1dc64d, 0x8dfc5d5d, 0xac19c136, 0x70b6b59a, 0xd4a582d6, 0xcf3f851f} } };
+void mp_mod_sub_const(mp_number * const r, const __constant mp_number * const a, const mp_number * const b) {
+	mp_word i, t, c = 0;
 
+	for (i = 0; i < MP_WORDS; ++i) {
+		t = a->d[i] - b->d[i] - c;
+		c = t < a->d[i] ? 0 : (t == a->d[i] ? c : 1);
+
+		r->d[i] = t;
+	}
+
+	if (c) {
+		c = 0;
+		for (i = 0; i < MP_WORDS; ++i) {
+			r->d[i] += mod.d[i] + c;
+			c = r->d[i] < mod.d[i] ? 1 : (r->d[i] == mod.d[i] ? c : 0);
+		}
+	}
+}
+
+void mp_mod_sub_gx( mp_number * const r, const mp_number * const a) {
 	mp_word i, t, c = 0;
 	
 	t = a->d[0] - 0x487e2097; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
@@ -173,9 +192,11 @@ void mp_shr( mp_number * const r ) {
 
 mp_word mp_mul_word( mp_number * const r, const mp_number * const a, const mp_word w, mp_word * const extra) {
 	mp_word c = 0;
+	
 	for( mp_word i = 0; i < MP_WORDS; ++i ) {
 		r->d[i] = a->d[i] * w + c;
-		c = r->d[i] < c ? mul_hi(a->d[i], w) + 1 : mul_hi(a->d[i], w);
+		//c = r->d[i] < c ? mul_hi(a->d[i], w) + 1 : mul_hi(a->d[i], w);
+		c = mul_hi(a->d[i], w) + (r->d[i] < c);
 	}
 	
 	*extra += c;
@@ -190,14 +211,14 @@ void mp_mul_mont( mp_number * const r, const mp_number * const a, const mp_numbe
 	mp_word extraWord = 0;
 	mp_word overflow = 0;
 	
-	for( mp_word i = 0; i < MP_WORDS; ++i ) {
-		/* Overflow used as temporary variable before being reset below. */
+	for( mp_word i = 0; i < 8; ++i ) {
+		// Overflow used as temporary variable before being reset below.
 		overflow = (A.d[0] + a->d[i] * b->d[0]) * mPrime; // % b, where b = 2**MP_BITS
 		overflow = mp_mul_word( &tmpNumber, &mod_priv, overflow, &extraWord);
-		overflow += mp_add_extra( &A, &tmpNumber, &extraWord );
+		overflow += (extraWord += mp_add(&A, &tmpNumber)) == 0;
 		overflow += mp_mul_word( &tmpNumber, b, a->d[i], &extraWord);
-		overflow += mp_add_extra( &A, &tmpNumber, &extraWord );
-	
+		overflow += (extraWord += mp_add(&A, &tmpNumber)) == 0;
+		
 		A.d[0] = A.d[1];
 		A.d[1] = A.d[2];
 		A.d[2] = A.d[3];
@@ -209,7 +230,7 @@ void mp_mul_mont( mp_number * const r, const mp_number * const a, const mp_numbe
 		extraWord = overflow;
 	}
 	
-	if( extraWord ) { /* Ignore where N <= A < 2 ** 256 */
+	if( extraWord ) { // Ignore where N <= A < 2 ** 256
 		mp_sub_mod(&A);
 	}
 	
@@ -377,6 +398,7 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 2, seed.z);
 	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 3, seed.w + id);
 
+	mp_mod_sub_gx(&p.x, &p.x);
 	pPoints[id] = p;
 
 	for( uchar i = 0; i < PROFANITY_MAX_SCORE + 1; ++i ) {
@@ -385,22 +407,17 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 }
 
 __kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
-
 	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
 	
-	mp_number copy1, copy2, copy3;
+	mp_number copy1, copy2;
 	mp_number buffer[PROFANITY_INVERSE_SIZE];
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
 
 	buffer[0] = pPoints[id].x;
-	mp_mod_sub_gx( &buffer[0], &buffer[0]);
-	pInverse[0] = buffer[0];
 
 	for( uint i = 1; i < PROFANITY_INVERSE_SIZE; ++i ) {
 		buffer[i] = pPoints[id + i].x;
-		mp_mod_sub_gx(&buffer[i], &buffer[i]);
-		pInverse[id + i] = buffer[i];
-		mp_mul_mont(&buffer[i], &buffer[i - 1], &buffer[i]);
+		mp_mul_mont(&buffer[i], &buffer[i], &buffer[i - 1]);
 	}
 
 	// mp_mod_inverse(aR) -> (aR)^-1 
@@ -411,18 +428,18 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 	mp_mul_mont(&copy1, &copy1, &mont_rrr); 
 
 	for( uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i ) {
-		copy2 = pInverse[id + i];
-
-		mp_mul_mont(&copy3, &buffer[i - 1], &copy1);
-		mp_mul_mont(&copy1, &copy2, &copy1);
-		pInverse[id + i] = copy3;
+		mp_mul_mont(&copy2, &copy1, &buffer[i - 1]);
+		pInverse[id + i] = copy2;
+		copy2 = pPoints[id + i].x;
+		
+		mp_mul_mont(&copy1, &copy1, &copy2);
 	}
 
 	pInverse[id] = copy1;
 }
 
 /*
-// Unrolled version of the inversion algorithm where PROFANITY_INVERSE_SIZE = 64.
+// Unrolled version of the inversion algorithm (old version) where PROFANITY_INVERSE_SIZE = 64.
 // This one gave horribly performance on my GTX 1070 and massively increased build time.
 // On an RX480 it gave worse performance, 64MH/s vs 74MH/s.
 // I'll leave it as a multi-line comment here for possible future experimentation on other platforms.
@@ -453,31 +470,38 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 
 __kernel void profanity_inverse_post(__global point * const pPoints, __global const mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
-	
-	point n = pPoints[id];
+
+	point p = pPoints[id];
 	mp_number tmp = pInverse[id];
-	mp_number gx = { {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643} };
 
-	// newY used as temporary variable in following two statements
-	mp_mod_sub_gy( &n.y, &n.y );
-	mp_mul_mont( &tmp, &tmp, &n.y );
-	n.y = n.x;
+	// λ = (y - G_Y) / (x - G_X)
+	// p.y := (p.y - G_Y) * pInverse[id] = λ
+	mp_mod_sub_gy( &p.y, &p.y );
+	mp_mul_mont( &p.y, &p.y, &tmp );
 
-	mp_mul_mont( &n.x, &tmp, &tmp );
-	mp_mod_sub( &n.x, &n.x, &n.y );
-	mp_mod_sub_gx(&n.x, &n.x);
+	// λ² = λ * λ <=> tmp := tmp * tmp = λ²
+	mp_mul_mont(&tmp, &p.y, &p.y);
 
-	mp_mod_sub( &n.y, &gx, &n.x );
-	mp_mul_mont( &n.y, &n.y, &tmp );
-	mp_mod_sub_gy(&n.y, &n.y);
-	
-	pPoints[id] = n;
+	// x' = λ² - x - 3g = (-3g) - (x - λ²) <=> p.x := tripleNegativeGx - (p.x - tmp)
+	mp_mod_sub(&p.x, &p.x, &tmp);
+	mp_mod_sub_const(&p.x, &tripleNegativeGx, &p.x);
+
+	// y' = (-G_Y) - λ * x'
+	mp_mul_mont(&p.y, &p.y, &p.x);
+	mp_mod_sub_const(&p.y, &negativeGy, &p.y);
+
+	pPoints[id] = p;
 }
 
 __kernel void profanity_end(__global point * const pPoints,	__global mp_number * const pInverse ) {
 	const size_t id = get_global_id(0);
+	mp_number negativeGx = { {0xb781db98, 0x28c9d1a4, 0xd6439924, 0xdce1d6ac, 0xcc02ed63, 0x6860b73f, 0x16f760b7, 0x667e19bc} };
+
 	ethhash h;
 	point p = pPoints[id];
+
+	// Restore X coordinate by adding back g_x (subtracting negative g_x)
+	mp_mod_sub(&p.x, &p.x, &negativeGx);
 
 	// De-montgomerize by multiplying with one.
 	mp_mul_mont_one(&p.x, &p.x);
