@@ -99,7 +99,7 @@ Mode Mode::numbers() {
 std::string Mode::transformKernel() const {
 	switch (this->target) {
 		case ADDRESS:
-			return "profanity_transform_identity";
+			return "";
 		case CONTRACT:
 			return "profanity_transform_contract";
 		default:

@@ -117,7 +117,7 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_kernelInverse(createKernel(clProgram, "profanity_inverse_multiple")),
 	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
 	m_kernelEnd(createKernel(clProgram, "profanity_end")),
-	m_kernelTransform(createKernel(clProgram, mode.transformKernel())),
+	m_kernelTransform( mode.transformKernel() == "" ? NULL : createKernel(clProgram, mode.transformKernel())),
 	m_kernelScore(createKernel(clProgram, mode.kernel)),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
 	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
@@ -241,7 +241,9 @@ void Dispatcher::initBegin(Device & d) {
 	d.m_memInverse.setKernelArg(d.m_kernelEnd, 1);
 
 	// Kernel arguments - profanity_transform_*
-	d.m_memInverse.setKernelArg(d.m_kernelTransform, 0);
+	if(d.m_kernelTransform) {
+		d.m_memInverse.setKernelArg(d.m_kernelTransform, 0);
+	}
 
 	// Kernel arguments - profanity_score_*
 	d.m_memInverse.setKernelArg(d.m_kernelScore, 0);
@@ -326,16 +328,18 @@ void Dispatcher::dispatch(Device & d) {
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize);
 	enqueueKernelDevice(d, d.m_kernelInversePost, m_size);
 	enqueueKernelDevice(d, d.m_kernelEnd, m_size);
-	enqueueKernelDevice(d, d.m_kernelTransform, m_size);
-	enqueueKernelDevice(d, d.m_kernelScore, m_size);
 
 	cl_event event;
 	d.m_memResult.read(false, &event);
+	if (d.m_kernelTransform) {
+		enqueueKernelDevice(d, d.m_kernelTransform, m_size);
+	}
+
+	enqueueKernelDevice(d, d.m_kernelScore, m_size);
+	clFlush(d.m_clQueue);
 
 	const auto res = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
 	OpenCLException::throwIfError("failed to set custom callback", res);
-
-	clFlush(d.m_clQueue);
 }
 
 void Dispatcher::handleResult(Device & d) {
