@@ -450,36 +450,58 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 	pInverse[id] = copy1;
 }
 
-/*
-// Unrolled version of the inversion algorithm (old version) where PROFANITY_INVERSE_SIZE = 64.
-// This one gave horribly performance on my GTX 1070 and massively increased build time.
-// On an RX480 it gave worse performance, 64MH/s vs 74MH/s.
-// I'll leave it as a multi-line comment here for possible future experimentation on other platforms.
-
-#define INVERSE_BEGIN(B) B = pPoints[id].x; mp_mod_sub_gx(&B, &B); pInverse[0] = B;
-#define INVERSE(B, BP, offset) B = pPoints[id+offset].x; mp_mod_sub_gx(&B, &B); pInverse[id+offset] = B; mp_mul_mont(&B, &BP, &B);
-#define INVERSE_REV(B, offset) copy2 = pInverse[id + offset]; mp_mul_mont(&copy3, &B, &copy1); mp_mul_mont(&copy1, &copy2, &copy1); pInverse[id + offset] = copy3;
-#define INVERSE_REV_END() pInverse[id] = copy1;
-
-__kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
-	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
-
-	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
-	mp_number copy1, copy2, copy3;
-	mp_number b00, b01, b02, b03, b04, b05, b06, b07, b08, b09, b10, b11, b12, b13, b14, b15, b16, b17, b18, b19, b20, b21, b22, b23, b24, b25, b26, b27, b28, b29, b30, b31, b32, b33, b34, b35, b36, b37, b38, b39, b40, b41, b42, b43, b44, b45, b46, b47, b48, b49, b50, b51, b52, b53, b54, b55, b56, b57, b58, b59, b60, b61, b62, b63;
-	
-	INVERSE_BEGIN(b00); INVERSE(b01, b00, 1); INVERSE(b02, b01, 2); INVERSE(b03, b02, 3); INVERSE(b04, b03, 4); INVERSE(b05, b04, 5); INVERSE(b06, b05, 6); INVERSE(b07, b06, 7); INVERSE(b08, b07, 8); INVERSE(b09, b08, 9); INVERSE(b10, b09, 10); INVERSE(b11, b10, 11); INVERSE(b12, b11, 12); INVERSE(b13, b12, 13); INVERSE(b14, b13, 14); INVERSE(b15, b14, 15); INVERSE(b16, b15, 16); INVERSE(b17, b16, 17); INVERSE(b18, b17, 18); INVERSE(b19, b18, 19); INVERSE(b20, b19, 20); INVERSE(b21, b20, 21); INVERSE(b22, b21, 22); INVERSE(b23, b22, 23); INVERSE(b24, b23, 24); INVERSE(b25, b24, 25); INVERSE(b26, b25, 26); INVERSE(b27, b26, 27); INVERSE(b28, b27, 28); INVERSE(b29, b28, 29); INVERSE(b30, b29, 30); INVERSE(b31, b30, 31); INVERSE(b32, b31, 32); INVERSE(b33, b32, 33); INVERSE(b34, b33, 34); INVERSE(b35, b34, 35); INVERSE(b36, b35, 36); INVERSE(b37, b36, 37); INVERSE(b38, b37, 38); INVERSE(b39, b38, 39); INVERSE(b40, b39, 40); INVERSE(b41, b40, 41); INVERSE(b42, b41, 42); INVERSE(b43, b42, 43); INVERSE(b44, b43, 44); INVERSE(b45, b44, 45); INVERSE(b46, b45, 46); INVERSE(b47, b46, 47); INVERSE(b48, b47, 48); INVERSE(b49, b48, 49); INVERSE(b50, b49, 50); INVERSE(b51, b50, 51); INVERSE(b52, b51, 52); INVERSE(b53, b52, 53); INVERSE(b54, b53, 54); INVERSE(b55, b54, 55); INVERSE(b56, b55, 56); INVERSE(b57, b56, 57); INVERSE(b58, b57, 58); INVERSE(b59, b58, 59); INVERSE(b60, b59, 60); INVERSE(b61, b60, 61); INVERSE(b62, b61, 62); INVERSE(b63, b62, 63);
-
-	// Middle step
-	copy1 = b63;
-	mp_mod_inverse(&copy1);
-	mp_mul_mont(&copy1, &copy1, &mont_rrr);
-
-	// Reverse
-	INVERSE_REV(b62, 63); INVERSE_REV(b61, 62); INVERSE_REV(b60, 61); INVERSE_REV(b59, 60); INVERSE_REV(b58, 59); INVERSE_REV(b57, 58); INVERSE_REV(b56, 57); INVERSE_REV(b55, 56); INVERSE_REV(b54, 55); INVERSE_REV(b53, 54); INVERSE_REV(b52, 53); INVERSE_REV(b51, 52); INVERSE_REV(b50, 51); INVERSE_REV(b49, 50); INVERSE_REV(b48, 49); INVERSE_REV(b47, 48); INVERSE_REV(b46, 47); INVERSE_REV(b45, 46); INVERSE_REV(b44, 45); INVERSE_REV(b43, 44); INVERSE_REV(b42, 43); INVERSE_REV(b41, 42); INVERSE_REV(b40, 41); INVERSE_REV(b39, 40); INVERSE_REV(b38, 39); INVERSE_REV(b37, 38); INVERSE_REV(b36, 37); INVERSE_REV(b35, 36); INVERSE_REV(b34, 35); INVERSE_REV(b33, 34); INVERSE_REV(b32, 33); INVERSE_REV(b31, 32); INVERSE_REV(b30, 31); INVERSE_REV(b29, 30); INVERSE_REV(b28, 29); INVERSE_REV(b27, 28); INVERSE_REV(b26, 27); INVERSE_REV(b25, 26); INVERSE_REV(b24, 25); INVERSE_REV(b23, 24); INVERSE_REV(b22, 23); INVERSE_REV(b21, 22); INVERSE_REV(b20, 21); INVERSE_REV(b19, 20); INVERSE_REV(b18, 19); INVERSE_REV(b17, 18); INVERSE_REV(b16, 17); INVERSE_REV(b15, 16); INVERSE_REV(b14, 15); INVERSE_REV(b13, 14); INVERSE_REV(b12, 13); INVERSE_REV(b11, 12); INVERSE_REV(b10, 11); INVERSE_REV(b09, 10); INVERSE_REV(b08, 9); INVERSE_REV(b07, 8); INVERSE_REV(b06, 7); INVERSE_REV(b05, 6); INVERSE_REV(b04, 5); INVERSE_REV(b03, 4); INVERSE_REV(b02, 3); INVERSE_REV(b01, 2); INVERSE_REV(b00, 1); INVERSE_REV_END();
-}
-*/
-
+// This kernel performs en elliptical curve point addition. See:
+// https://en.wikipedia.org/wiki/Elliptic_curve_point_multiplication#Point_addition
+// I've made one mathematical optimization by never calculating x_r,
+// instead I directly calculate the delta (x_q - x_p). It's for this
+// delta we calculate the inverse and that's already been done at this
+// point. By calculating and storing the next delta we don't have to
+// calculate the delta in profanity_inverse_multiple which saves us
+// one call to mp_mod_sub per point, but inversely we have to introduce
+// an addition (or addition by subtracting a negative number) in
+// profanity_end to retrieve the actual x-coordinate instead of the
+// delta as that's what used for calculating the public hash.
+//
+// The optimization comes when calculating the next y-coordinate. As
+// given in the wiki the next y-coordinate is given by:
+//   y_r = λ²(x_p - x_r) - y_p
+// In our case the other point P is the generator point so x_p = G_x,
+// a constant value. x_r is the new point which we never calculate, we
+// calculate the new delta (x_q - x_p) instead. Let's denote the delta
+// with d and new delta as d' and remove notation for points P and Q and
+// instead refeer to x_p as G_x, y_p as G_y and x_q as x, y_q as y.
+// Furthermore let's denote new x by x' and new y with y'.
+//
+// Then we have:
+//   d = x - G_x <=> x = d + G_x
+//   x' = λ² - G_x - x <=> x_r = λ² - G_x - d - G_x = λ² - 2G_x - d
+//   
+//   d' = x' - G_x = λ² - 2G_x - d - G_x = λ² - 3G_x - d
+//
+// So we see that the new delta d' can be calculated with the same
+// amount of steps as the new x'; 3G_x is still just a single constant.
+//
+// Now for the next y-coordinate in the new notation:
+//   y' =  λ(G_x - x') - G_y
+//
+// If we expand the expression (G_x - x') we can see that this
+// subtraction can be removed! Saving us one call to mp_mod_sub!
+//   G_x - x' = -(x' - G_x) = -d'
+// It has the same value as the new delta but negated! We can avoid
+// having to perform the negation by:
+//   y' = λ * -d' - G_y = -G_y - (λ * d')
+//
+// We can just precalculate the constant -G_y and we get rid of one
+// subtraction. Woo!
+//
+// In addition to this some algebraic re-ordering has been done to move
+// constants into the same argument to a new function mp_mod_sub_const
+// in hopes that using constant storage instead of private storage
+// will aid speeds.
+//
+// So, in summation, pPoints.x NEVER contains the x-coordinate, it
+// contains the delta (x - G_x) and this kernel performs an optimized
+// elliptic point addition adding the generator point G.
 __kernel void profanity_inverse_post(__global point * const pPoints, __global const mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
 
@@ -505,7 +527,13 @@ __kernel void profanity_inverse_post(__global point * const pPoints, __global co
 	pPoints[id] = p;
 }
 
-__kernel void profanity_end(__global point * const pPoints,	__global mp_number * const pInverse ) {
+// This kernel retrieves a point and calculates its public address. The
+// public address is stored in pInverse which is used only as interim
+// storage as its contents won't be needed anymore for this cycle.
+//
+// One of the scoring kernels will run after this and fetch the address
+// from pInverse.
+__kernel void profanity_end(__global point * const pPoints, __global mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
 	mp_number negativeGx = { {0xb781db98, 0x28c9d1a4, 0xd6439924, 0xdce1d6ac, 0xcc02ed63, 0x6860b73f, 0x16f760b7, 0x667e19bc} };
 
