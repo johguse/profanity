@@ -407,7 +407,8 @@ void Dispatcher::printSpeed() {
 			++i;
 		}
 
-		std::cerr << "Total: " << formatSpeed(speedTotal) << " -" << strGPUs << '\r' << std::flush;
+		const std::string strVT100ClearLine = "\33[2K\r";
+		std::cerr << strVT100ClearLine << "Total: " << formatSpeed(speedTotal) << " -" << strGPUs << '\r' << std::flush;
 		m_countPrint = 0;
 	}
 }
