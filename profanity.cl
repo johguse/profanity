@@ -497,7 +497,7 @@ __kernel void profanity_end(__global point * const pPoints,	__global mp_number *
 	const size_t id = get_global_id(0);
 	mp_number negativeGx = { {0xb781db98, 0x28c9d1a4, 0xd6439924, 0xdce1d6ac, 0xcc02ed63, 0x6860b73f, 0x16f760b7, 0x667e19bc} };
 
-	ethhash h;
+	ethhash h = { { 0 } };
 	point p = pPoints[id];
 
 	// Restore X coordinate by adding back g_x (subtracting negative g_x)
@@ -506,11 +506,6 @@ __kernel void profanity_end(__global point * const pPoints,	__global mp_number *
 	// De-montgomerize by multiplying with one.
 	mp_mul_mont_one(&p.x, &p.x);
 	mp_mul_mont_one(&p.y, &p.y);
-
-	// We can't initialize via h.q here, even if we do "h.q[i] = (ulong) 0", I have no idea why.
-	for( int i = 0; i < 50; ++i ) {
-		h.d[i] = 0;
-	}
 
 	h.d[0] = bswap32(p.x.d[MP_WORDS - 1]);
 	h.d[1] = bswap32(p.x.d[MP_WORDS - 2]);
