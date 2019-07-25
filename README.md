@@ -66,16 +66,18 @@ usage: ./profanity [OPTIONS]
     Beer donations: 0x000dead000ae1c8e8ac27103e4ff65f42a4e9203
 ```
 
-### Benchmarks
+### Benchmarks - Current version
+|Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters
+|:-:|:-:|:-:|:-:|:-:|:-:|
+|GTX 1070 OC|1950|4450|NO|138.0 MH/s| ~31s
+|GTX 1070|1750|4000|NO|122.0 MH/s| ~35s
+|RX 480|1328|2000|YES|103.0 MH/s| ~42s
+
+### Benchmarks - Outdated versions
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters|Version
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 |RX VEGA56|1408|1100|YES|146 MH/s| ~29 s | 1.1x
-|GTX 1070 OC|1950|4450|NO|120.0 MH/s| ~36s | 1.3x
-|GTX 1070|1750|4000|NO|106.0 MH/s| ~41s | 1.3x
 |R9 290|1150|1400|NO|100 MH/s| ~43 s | 1.1x
-|RX 480|1328|2000|YES|97 MH/s| ~45 s| 1.2x
-|RX 480|1266|2000|YES|92 MH/s| ~47 s| 1.2x
 |RX 580|1366|1750|YES|92 MH/s| ~47 s| 1.2x
 |R9 290|1040|1300|NO|91 MH/s| ~47 s | 1.1x
 |RX 470|1216|1750|YES|73 MH/s| ~59s | 1.2x
-
