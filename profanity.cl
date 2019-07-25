@@ -408,8 +408,8 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 
 __kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
 	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
-	
-	mp_number copy1, copy2;
+
+	mp_number copy1, copy2, copy3;
 	mp_number buffer[PROFANITY_INVERSE_SIZE];
 	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
 
@@ -427,12 +427,24 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 	mp_mod_inverse( &copy1 );
 	mp_mul_mont(&copy1, &copy1, &mont_rrr); 
 
-	for( uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i ) {
-		mp_mul_mont(&copy2, &copy1, &buffer[i - 1]);
-		pInverse[id + i] = copy2;
+	for (uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i) {
+		mp_mul_mont(&copy3, &copy1, &buffer[i - 1]);
+		pInverse[id + i] = copy3;
 		copy2 = pPoints[id + i].x;
-		
-		mp_mul_mont(&copy1, &copy1, &copy2);
+
+		// Look. I have no deep knowledge of OpenCL architectural stuff
+		// of graphics cards or anything like that so I have no idea
+		// what optimizations are happening. But if I change to:
+		//   mp_mul_mont(&copy1, &copy1, &copy2);
+		// Then I lose about 13% performance on my RX480. It produces
+		// the same result and I think it would look nicer, but for
+		// some reason I get the 13% performance drop. Weird.
+		//
+		// On my nVidia GTX 1070 I drop a miniscule amount of
+		// performance using the below order but that was rectified
+		// by introducing copy3 instead of reusing copy2, probably
+		// giving the compiler some sort of hint. Anyways. All good now.
+		mp_mul_mont(&copy1, &copy2, &copy1);
 	}
 
 	pInverse[id] = copy1;
