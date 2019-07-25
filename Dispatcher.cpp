@@ -325,12 +325,13 @@ void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t wo
 }
 
 void Dispatcher::dispatch(Device & d) {
+	cl_event event;
+	d.m_memResult.read(false, &event);
+
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize);
 	enqueueKernelDevice(d, d.m_kernelInversePost, m_size);
 	enqueueKernelDevice(d, d.m_kernelEnd, m_size);
 
-	cl_event event;
-	d.m_memResult.read(false, &event);
 	if (d.m_kernelTransform) {
 		enqueueKernelDevice(d, d.m_kernelTransform, m_size);
 	}
@@ -343,8 +344,6 @@ void Dispatcher::dispatch(Device & d) {
 }
 
 void Dispatcher::handleResult(Device & d) {
-	++d.m_round;
-
 	for (auto i = PROFANITY_MAX_SCORE; i > m_clScoreMax; --i) {
 		result & r = d.m_memResult[i];
 
@@ -376,6 +375,7 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 		initContinue(d);
 	} else {
 		handleResult(d);
+		++d.m_round;
 
 		bool bDispatch = true;
 		{
