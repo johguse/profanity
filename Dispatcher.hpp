@@ -57,7 +57,8 @@ class Dispatcher {
 			cl_kernel m_kernelScore;
 
 			CLMemory<point> m_memPrecomp;
-			CLMemory<point> m_memPoints;
+			CLMemory<mp_number> m_memPointsX;
+			CLMemory<mp_number> m_memPointsY;
 			CLMemory<mp_number> m_memInverse;
 			CLMemory<result> m_memResult;
 
@@ -90,8 +91,8 @@ class Dispatcher {
 		void initContinue(Device & d);
 
 		void dispatch(Device & d);
-		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, const bool bSynchronous);
-		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, const bool bSynchronous);
+		void enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, cl_event * pEvent);
+		void enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, cl_event * pEvent);
 
 		void handleResult(Device & d);
 		void randomizeSeed(Device & d);

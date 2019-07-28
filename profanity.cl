@@ -1,3 +1,78 @@
+/* profanity.cl
+ * ============
+ * Contains multi-precision arithmetic functions and iterative elliptical point
+ * addition which is the heart of profanity.
+ *
+ * Terminology
+ * ===========
+ * 
+ *
+ * Cutting corners
+ * ===============
+ * In some instances this code will produce the incorrect results. The elliptical
+ * point addition does for example not properly handle the case of two points
+ * sharing the same X-coordinate. The reason the code doesn't handle it properly
+ * is because it is very unlikely to ever occur and the performance penalty for
+ * doing it right is too severe. In the future I'll introduce a periodic check
+ * after N amount of cycles that verifies the integrity of all the points to
+ * make sure that even very unlikely event are at some point rectified.
+ * 
+ * Currently, if any of the points in the kernels experiences the unlikely event
+ * of an error then that point is forever garbage and your runtime-performance
+ * will in practice be (i*I-N) / (i*I). i and I here refers to the values given
+ * to the program via the -i and -I switches (default values of 255 and 16384
+ * respectively) and N is the number of errornous points.
+ *
+ * So if a single error occurs you'll lose 1/(i*I) of your performance. That's
+ * around 0.00002%. The program will still report the same hashrate of course,
+ * only that some of that work is entirely wasted on this errornous point.
+ *
+ * Initialization of main structure
+ * ================================
+ *
+ * Iteration
+ * =========
+ * An iteration consists of a call to:
+ *   1. profanity_inverse_multiple
+ *   2. profanity_inverse_post
+ *   3. profanity_end
+ *   4. Potential transformation kernel for contract mode
+ *   5. One of the scoring kernels
+ *
+ * The most two important kernels are 1 and 2. After initialization the pointers
+ * pX and pY point to the X and Y coordinates of a number of points. In other
+ * words, point i is given by {pX[i], pY[i]}. These are points on the
+ * elliptical curve used for Ethereum address generation: secp256k1.
+ *
+ * A private key is a point on this curve and its transformed in an
+ * irreversible process to what we know as a public address. Since the process
+ * is irreversible this program has to try private key after private key until
+ * it finds the pattern the user is seeking. To move from one private key
+ * to the next - that is to say from one point on the curve to the next - we
+ * have to add the generator point to it.
+ *
+ * This is an elliptical point addition and it is performed in the second kernel,
+ * profanity_inverse_post. The point addition requires the modular inverse of
+ * a value, this inverse is calculated in profanity_inverse_multiple and saved
+ * for a point in the area pointed to by pInverse. So the inverse necessary for
+ * point i is saved in pInverse[i].
+ *
+ * The transformation from a point to a public address takes place in the
+ * kernel profanity_end.
+ *
+ * As a result of optimization this program no longer directly stores the X and
+ * Y value of a point on the curve in pPoints, instead the deltas X - G_x and
+ * Y - G_y are saved and the actual X and Y coordinates are retrieved by
+ * adding back G_x and G_y to the stored values. More information on this
+ * optimization can be found in the extensive comments for the kernels themselves.
+ *
+ * TODO
+ * ====
+ *   * Experiment and see if an improved version of profanity_inverse_multiple
+ *     that runs over all the points and thus only perform A SINGLE inversion
+ *     is feasible. Preliminary testing shows a maximum speed-up by about 4%.
+ */
+
 /* ------------------------------------------------------------------------ */
 /* Multiprecision functions                                                 */
 /* ------------------------------------------------------------------------ */
@@ -10,12 +85,16 @@ typedef struct {
 	mp_word d[MP_WORDS];
 } mp_number;
 
-__constant mp_number mod = { { 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
-__constant mp_word mPrime = 0xd2253531;
+// mod              = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f
+__constant const mp_number mod              = { {0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
 
-__constant mp_number tripleNegativeGx = { {0x26859699, 0x7a5d74ef, 0x82cacb6c, 0x96a58406, 0x6408c82b, 0x392225bf, 0x44e62226, 0x337a4d34} };
-__constant mp_number negativeGy = { {0x2c24504d, 0x4ea1592c, 0xe0e239b2, 0x7203a2a2, 0x53e63ec9, 0x8f494a65, 0x2b5a7d29, 0x30c07ae0} };
+// tripleNegativeGx = 0x92c4cc831269ccfaff1ed83e946adeeaf82c096e76958573f2287becbb17b196
+__constant const mp_number tripleNegativeGx = { {0xbb17b196, 0xf2287bec, 0x76958573, 0xf82c096e, 0x946adeea, 0xff1ed83e, 0x1269ccfa, 0x92c4cc83 } };
 
+// doubleNegativeGy = 0x6f8a4b11b2b8773544b60807e3ddeeae05d0976eb2f557ccc7705edf09de52bf
+__constant const mp_number doubleNegativeGy = { {0x09de52bf, 0xc7705edf, 0xb2f557cc, 0x05d0976e, 0xe3ddeeae, 0x44b60807, 0xb2b87735, 0x6f8a4b11} };
+
+// Multiprecision subtraction. Underflow signalled via return value.
 mp_word mp_sub(mp_number * const r, const mp_number * const a, const mp_number * const b) {
 	mp_word t, c = 0;
 
@@ -29,7 +108,10 @@ mp_word mp_sub(mp_number * const r, const mp_number * const a, const mp_number *
 	return c;
 }
 
+// Multiprecision subtraction of the modulus saved in mod. Underflow signalled via return value.
 mp_word mp_sub_mod(mp_number * const r) {
+	mp_number mod = { {0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
+
 	mp_word t, c = 0;
 
 	for (mp_word i = 0; i < MP_WORDS; ++i) {
@@ -42,6 +124,14 @@ mp_word mp_sub_mod(mp_number * const r) {
 	return c;
 }
 
+// Multiprecision subtraction modulo M, M = mod.
+// This function is often also used for additions by subtracting a negative number. I've chosen
+// to do this because:
+//   1. It's easier to re-use an already existing function
+//   2. A modular addition would have more overhead since it has to determine if the result of
+//      the addition (r) is in the gap M <= r < 2^256. This overhead doesn't exist in a
+//      subtraction. We immediately know at the end of a subtraction if we had underflow
+//      or not by inspecting the carry value. M refers to the modulus saved in variable mod.
 void mp_mod_sub(mp_number * const r, const mp_number * const a, const mp_number * const b) {
 	mp_word i, t, c = 0;
 
@@ -61,7 +151,10 @@ void mp_mod_sub(mp_number * const r, const mp_number * const a, const mp_number 
 	}
 }
 
-void mp_mod_sub_const(mp_number * const r, const __constant mp_number * const a, const mp_number * const b) {
+// Multiprecision subtraction modulo M from a constant number.
+// I made this in the belief that using constant address space instead of private address space for any
+// constant numbers would lead to increase in performance. Judges are still out on this one.
+void mp_mod_sub_const(mp_number * const r, __constant const mp_number * const a, const mp_number * const b) {
 	mp_word i, t, c = 0;
 
 	for (i = 0; i < MP_WORDS; ++i) {
@@ -80,17 +173,19 @@ void mp_mod_sub_const(mp_number * const r, const __constant mp_number * const a,
 	}
 }
 
+// Multiprecision subtraction modulo M of G_x from a number.
+// Specialization of mp_mod_sub in hope of performance gain.
 void mp_mod_sub_gx(mp_number * const r, const mp_number * const a) {
 	mp_word i, t, c = 0;
 
-	t = a->d[0] - 0x487e2097; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
-	t = a->d[1] - 0xd7362e5a - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
-	t = a->d[2] - 0x29bc66db - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
-	t = a->d[3] - 0x231e2953 - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
-	t = a->d[4] - 0x33fd129c - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
-	t = a->d[5] - 0x979f48c0 - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
-	t = a->d[6] - 0xe9089f48 - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
-	t = a->d[7] - 0x9981e643 - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
+	t = a->d[0] - 0x16f81798; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
+	t = a->d[1] - 0x59f2815b - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
+	t = a->d[2] - 0x2dce28d9 - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
+	t = a->d[3] - 0x029bfcdb - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
+	t = a->d[4] - 0xce870b07 - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
+	t = a->d[5] - 0x55a06295 - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
+	t = a->d[6] - 0xf9dcbbac - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
+	t = a->d[7] - 0x79be667e - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
 
 	if (c) {
 		c = 0;
@@ -101,17 +196,19 @@ void mp_mod_sub_gx(mp_number * const r, const mp_number * const a) {
 	}
 }
 
+// Multiprecision subtraction modulo M of G_y from a number.
+// Specialization of mp_mod_sub in hope of performance gain.
 void mp_mod_sub_gy(mp_number * const r, const mp_number * const a) {
 	mp_word i, t, c = 0;
 
-	t = a->d[0] - 0xd3dbabe2; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
-	t = a->d[1] - 0xb15ea6d2 - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
-	t = a->d[2] - 0x1f1dc64d - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
-	t = a->d[3] - 0x8dfc5d5d - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
-	t = a->d[4] - 0xac19c136 - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
-	t = a->d[5] - 0x70b6b59a - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
-	t = a->d[6] - 0xd4a582d6 - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
-	t = a->d[7] - 0xcf3f851f - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
+	t = a->d[0] - 0xfb10d4b8; c = t < a->d[0] ? 0 : (t == a->d[0] ? c : 1); r->d[0] = t;
+	t = a->d[1] - 0x9c47d08f - c; c = t < a->d[1] ? 0 : (t == a->d[1] ? c : 1); r->d[1] = t;
+	t = a->d[2] - 0xa6855419 - c; c = t < a->d[2] ? 0 : (t == a->d[2] ? c : 1); r->d[2] = t;
+	t = a->d[3] - 0xfd17b448 - c; c = t < a->d[3] ? 0 : (t == a->d[3] ? c : 1); r->d[3] = t;
+	t = a->d[4] - 0x0e1108a8 - c; c = t < a->d[4] ? 0 : (t == a->d[4] ? c : 1); r->d[4] = t;
+	t = a->d[5] - 0x5da4fbfc - c; c = t < a->d[5] ? 0 : (t == a->d[5] ? c : 1); r->d[5] = t;
+	t = a->d[6] - 0x26a3c465 - c; c = t < a->d[6] ? 0 : (t == a->d[6] ? c : 1); r->d[6] = t;
+	t = a->d[7] - 0x483ada77 - c; c = t < a->d[7] ? 0 : (t == a->d[7] ? c : 1); r->d[7] = t;
 
 	if (c) {
 		c = 0;
@@ -122,6 +219,7 @@ void mp_mod_sub_gy(mp_number * const r, const mp_number * const a) {
 	}
 }
 
+// Multiprecision addition. Overflow signalled via return value.
 mp_word mp_add(mp_number * const r, const mp_number * const a) {
 	mp_word c = 0;
 
@@ -133,6 +231,7 @@ mp_word mp_add(mp_number * const r, const mp_number * const a) {
 	return c;
 }
 
+// Multiprecision addition of the modulus saved in mod. Overflow signalled via return value.
 mp_word mp_add_mod(mp_number * const r) {
 	mp_word c = 0;
 
@@ -144,18 +243,14 @@ mp_word mp_add_mod(mp_number * const r) {
 	return c;
 }
 
+// Multiprecision addition of two numbers with one extra word each. Overflow signalled via return value.
 mp_word mp_add_more(mp_number * const r, mp_word * const extraR, const mp_number * const a, const mp_word * const extraA) {
 	const mp_word c = mp_add(r, a);
 	*extraR += *extraA + c;
 	return *extraR < *extraA ? 1 : (*extraR == *extraA ? c : 0);
 }
 
-mp_word mp_add_extra(mp_number * const r, mp_number * const a, mp_word * const extra) {
-	const mp_word c = mp_add(r, a);
-	*extra += c;
-	return *extra < c;
-}
-
+// Multiprecision greater than or equal (>=) operator
 mp_word mp_gte(const mp_number * const a, const mp_number * const b) {
 	mp_word l = 0, g = 0;
 
@@ -167,6 +262,7 @@ mp_word mp_gte(const mp_number * const a, const mp_number * const b) {
 	return g >= l;
 }
 
+// Bit shifts a number with an extra word to the right one step
 void mp_shr_extra(mp_number * const r, mp_word * const e) {
 	r->d[0] = (r->d[1] << 31) | (r->d[0] >> 1);
 	r->d[1] = (r->d[2] << 31) | (r->d[1] >> 1);
@@ -179,6 +275,7 @@ void mp_shr_extra(mp_number * const r, mp_word * const e) {
 	*e >>= 1;
 }
 
+// Bit shifts a number to the right one step
 void mp_shr(mp_number * const r) {
 	r->d[0] = (r->d[1] << 31) | (r->d[0] >> 1);
 	r->d[1] = (r->d[2] << 31) | (r->d[1] >> 1);
@@ -190,89 +287,81 @@ void mp_shr(mp_number * const r) {
 	r->d[7] >>= 1;
 }
 
-mp_word mp_mul_word(mp_number * const r, const mp_number * const a, const mp_word w, mp_word * const extra) {
-	mp_word c = 0;
+// Multiplies a number with a word and adds it to an existing number with an extra word, overflow of the extra word is signalled in return value
+// This is a special function only used for modular multiplication
+mp_word mp_mul_word_add_extra(mp_number * const r, const mp_number * const a, const mp_word w, mp_word * const extra) {
+	mp_word cM = 0; // Carry for multiplication
+	mp_word cA = 0; // Carry for addition
+	mp_word tM = 0; // Temporary storage for multiplication
 
 	for (mp_word i = 0; i < MP_WORDS; ++i) {
-		r->d[i] = a->d[i] * w + c;
-		//c = r->d[i] < c ? mul_hi(a->d[i], w) + 1 : mul_hi(a->d[i], w);
-		c = mul_hi(a->d[i], w) + (r->d[i] < c);
+		tM = (a->d[i] * w + cM);
+		cM = mul_hi(a->d[i], w) + (tM < cM);
+
+		r->d[i] += tM + cA;
+		cA = r->d[i] < tM ? 1 : (r->d[i] == tM ? cA : 0);
 	}
 
-	*extra += c;
-	return *extra < c;
+	*extra += cM + cA;
+	return *extra < cM ? 1 : (*extra == cM ? cA : 0);
 }
 
-void mp_mul_mont(mp_number * const r, const mp_number * const a, const mp_number * const b) {
-	mp_number mod_priv = { { 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
-	mp_number A = { { 0, 0, 0, 0, 0, 0, 0, 0} };
-	mp_number tmpNumber;
+// Multiplies a number with a word, potentially adds modhigher to it, and then subtracts it from en existing number, no extra words, no overflow
+// This is a special function only used for modular multiplication
+void mp_mul_mod_word_sub(mp_number * const r, const mp_word w, const bool withModHigher) {
+	// Having these numbers declared here instead of using the global values in __constant address space seems to lead
+	// to better optimizations by the compiler on my GTX 1070.
+	mp_number mod = { { 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
+	mp_number modhigher = { {0x00000000, 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
 
-	mp_word extraWord = 0;
-	mp_word overflow = 0;
-
-	for (mp_word i = 0; i < 8; ++i) {
-		// Overflow used as temporary variable before being reset below.
-		overflow = (A.d[0] + a->d[i] * b->d[0]) * mPrime; // % b, where b = 2**MP_BITS
-		overflow = mp_mul_word(&tmpNumber, &mod_priv, overflow, &extraWord);
-		overflow += (extraWord += mp_add(&A, &tmpNumber)) == 0;
-		overflow += mp_mul_word(&tmpNumber, b, a->d[i], &extraWord);
-		overflow += (extraWord += mp_add(&A, &tmpNumber)) == 0;
-
-		A.d[0] = A.d[1];
-		A.d[1] = A.d[2];
-		A.d[2] = A.d[3];
-		A.d[3] = A.d[4];
-		A.d[4] = A.d[5];
-		A.d[5] = A.d[6];
-		A.d[6] = A.d[7];
-		A.d[7] = extraWord;
-		extraWord = overflow;
-	}
-
-	if (extraWord) { // Ignore where N <= A < 2 ** 256
-		mp_sub_mod(&A);
-	}
-
-	*r = A;
-}
-
-/* This is an optimization of the above. Moving out of Montgomery form can be done
- * by doing a Montgomery multiplication with 1. */
-void mp_mul_mont_one(mp_number * const r, const mp_number * const a) {
-	mp_number mod_priv = { { 0xfffffc2f, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff} };
-	mp_number A = { { 0, 0, 0, 0, 0, 0, 0, 0} };
-	mp_number tmpNumber;
-
-	mp_word extraWord = 0;
-	mp_word overflow = 0;
-	mp_word c = 0;
+	mp_word cM = 0; // Carry for multiplication
+	mp_word cS = 0; // Carry for subtraction
+	mp_word tS = 0; // Temporary storage for subtraction
+	mp_word tM = 0; // Temporary storage for multiplication
+	mp_word cA = 0; // Carry for addition of modhigher
 
 	for (mp_word i = 0; i < MP_WORDS; ++i) {
-		/* Overflow used as temporary variable before being reset below. */
-		overflow = (A.d[0] + a->d[i]) * mPrime; // % b, where b = 2**MP_BITS
-		overflow = mp_mul_word(&tmpNumber, &mod_priv, overflow, &extraWord);
-		overflow += mp_add_extra(&A, &tmpNumber, &extraWord);
+		tM = (mod.d[i] * w + cM);
+		cM = mul_hi(mod.d[i], w) + (tM < cM);
 
-		c = (A.d[0] + a->d[i]) < A.d[0];
-		A.d[0] = A.d[1] + c; c = !A.d[0];
-		A.d[1] = A.d[2] + c; c = !A.d[1];
-		A.d[2] = A.d[3] + c; c = !A.d[2];
-		A.d[3] = A.d[4] + c; c = !A.d[3];
-		A.d[4] = A.d[5] + c; c = !A.d[4];
-		A.d[5] = A.d[6] + c; c = !A.d[5];
-		A.d[6] = A.d[7] + c; c = !A.d[6];
-		A.d[7] = extraWord + c;
-		extraWord = overflow;
+		tM += (withModHigher ? modhigher.d[i] : 0) + cA;
+		cA = tM < (withModHigher ? modhigher.d[i] : 0) ? 1 : (tM == (withModHigher ? modhigher.d[i] : 0) ? cA : 0);
+
+		tS = r->d[i] - tM - cS;
+		cS = tS > r->d[i] ? 1 : (tS == r->d[i] ? cS : 0);
+
+		r->d[i] = tS;
 	}
-
-	if (extraWord) { /* Ignore where N <= A < 2 ** 256 */
-		mp_sub_mod(&A);
-	}
-
-	*r = A;
 }
 
+// Modular multiplication. Based on Algorithm 3 (and a series of hunches) from this article:
+// https://www.esat.kuleuven.be/cosic/publications/article-1191.pdf
+// When I first implemented it I never encountered a situation where the additional end steps
+// of adding or subtracting the modulo was necessary. Maybe it's not for the particular modulo
+// used in secp256k1, maybe the overflow bit can be skipped in to avoid 8 subtractions and
+// trade it for the final steps? Maybe the final steps are necessary but seldom needed?
+// I have no idea, for the time being I'll leave it like this, also see the comments at the
+// beginning of this document under the title "Cutting corners".
+void mp_mod_mul(mp_number * const r, const mp_number * const X, const mp_number * const Y) {
+
+	mp_number Z = { {0} };
+	mp_word extraWord;
+
+	for (int i = MP_WORDS - 1; i >= 0; --i) {
+		// Z = Z * 2^32
+		extraWord = Z.d[7]; Z.d[7] = Z.d[6]; Z.d[6] = Z.d[5]; Z.d[5] = Z.d[4]; Z.d[4] = Z.d[3]; Z.d[3] = Z.d[2]; Z.d[2] = Z.d[1]; Z.d[1] = Z.d[0]; Z.d[0] = 0;
+
+		// Z = Z + X * Y_i
+		bool overflow = mp_mul_word_add_extra(&Z, X, Y->d[i], &extraWord);
+
+		// Z = Z - qM
+		mp_mul_mod_word_sub(&Z, extraWord, overflow);
+	}
+
+	*r = Z;
+}
+
+// Modular inversion of a number. 
 void mp_mod_inverse(mp_number * const r) {
 	mp_number A = { { 1 } };
 	mp_number C = { { 0 } };
@@ -326,13 +415,10 @@ typedef struct {
 	mp_number y;
 } point;
 
-// OpenCL crashes when trying to initialize local variables using the below
-//__constant point generator = { { {0x487e2097, 0xd7362e5a, 0x29bc66db, 0x231e2953, 0x33fd129c, 0x979f48c0, 0xe9089f48, 0x9981e643} }, { {0xd3dbabe2, 0xb15ea6d2, 0x1f1dc64d, 0x8dfc5d5d, 0xac19c136, 0x70b6b59a, 0xd4a582d6, 0xcf3f851f} } };
-
+// Elliptical point addition
 // Does not handle points sharing X coordinate, this is a deliberate design choice.
+// For more information on this choice see the beginning of this file.
 void point_add(point * const p, point * const o) {
-	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0} };
-
 	mp_number tmp;
 	mp_number newX;
 	mp_number newY;
@@ -340,17 +426,16 @@ void point_add(point * const p, point * const o) {
 	mp_mod_sub(&tmp, &o->x, &p->x);
 
 	mp_mod_inverse(&tmp);
-	mp_mul_mont(&tmp, &tmp, &mont_rrr);
 
 	mp_mod_sub(&newX, &o->y, &p->y);
-	mp_mul_mont(&tmp, &tmp, &newX);
+	mp_mod_mul(&tmp, &tmp, &newX);
 
-	mp_mul_mont(&newX, &tmp, &tmp);
+	mp_mod_mul(&newX, &tmp, &tmp);
 	mp_mod_sub(&newX, &newX, &p->x);
 	mp_mod_sub(&newX, &newX, &o->x);
 
 	mp_mod_sub(&newY, &p->x, &newX);
-	mp_mul_mont(&newY, &newY, &tmp);
+	mp_mod_mul(&newY, &newY, &tmp);
 	mp_mod_sub(&newY, &newY, &p->y);
 
 	p->x = newX;
@@ -386,7 +471,7 @@ void profanity_begin_seed(__global const point * const precomp, point * const p,
 	}
 }
 
-__kernel void profanity_begin(__global const point * const precomp, __global point * const pPoints, __global result * const pResult, const ulong4 seed) {
+__kernel void profanity_begin(__global const point * const precomp, __global mp_number * const pX, __global mp_number * const pY, __global result * const pResult, const ulong4 seed) {
 	const size_t id = get_global_id(0);
 	point p;
 	bool bIsFirst = true;
@@ -397,52 +482,44 @@ __kernel void profanity_begin(__global const point * const precomp, __global poi
 	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 3, seed.w + id);
 
 	mp_mod_sub_gx(&p.x, &p.x);
-	pPoints[id] = p;
+	mp_mod_sub_gy(&p.y, &p.y);
+
+	pX[id] = p.x;
+	pY[id] = p.y;
 
 	for (uchar i = 0; i < PROFANITY_MAX_SCORE + 1; ++i) {
 		pResult[i].found = 0;
 	}
 }
 
-__kernel void profanity_inverse_multiple(__global point * const pPoints, __global mp_number * const pInverse) {
+// This kernel calculates several modular inversions at once with just one inverse.
+// It's an implementation of Algorithm 2.11 from Modern Computer Arithmetic:
+// https://members.loria.fr/PZimmermann/mca/pub226.html 
+//
+// My RX 480 is very sensitive to changes in the second loop and sometimes I have
+// to make seemingly non-functional changes to the code to make the compiler
+// generate the most optimized version.
+__kernel void profanity_inverse_multiple(__global mp_number * const pX, __global mp_number * const pInverse) {
 	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
 
-	mp_number copy1, copy2, copy3;
+	mp_number copy1, copy2;
 	mp_number buffer[PROFANITY_INVERSE_SIZE];
-	mp_number mont_rrr = { { 0x3795f671, 0x002bb1e3, 0x00000b73, 0x1, 0, 0, 0, 0 } };
 
-	buffer[0] = pPoints[id].x;
+	buffer[0] = pX[id];
 
 	for (uint i = 1; i < PROFANITY_INVERSE_SIZE; ++i) {
-		buffer[i] = pPoints[id + i].x;
-		mp_mul_mont(&buffer[i], &buffer[i], &buffer[i - 1]);
+		buffer[i] = pX[id + i];
+		mp_mod_mul(&buffer[i], &buffer[i], &buffer[i - 1]);
 	}
 
-	// mp_mod_inverse(aR) -> (aR)^-1 
-	// mp_mul_mont(x,y) -> x * y * R^-1
-	// mp_mul_mont( (aR)^-1, R^3 ) -> (aR)^-1 * R^3 * R^-1 = a^-1 * R
 	copy1 = buffer[PROFANITY_INVERSE_SIZE - 1];
 	mp_mod_inverse(&copy1);
-	mp_mul_mont(&copy1, &copy1, &mont_rrr);
 
 	for (uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i) {
-		mp_mul_mont(&copy3, &copy1, &buffer[i - 1]);
-		pInverse[id + i] = copy3;
-		copy2 = pPoints[id + i].x;
-
-		// Look. I have no deep knowledge of OpenCL architectural stuff
-		// of graphics cards or anything like that so I have no idea
-		// what optimizations are happening. But if I change to:
-		//   mp_mul_mont(&copy1, &copy1, &copy2);
-		// Then I lose about 13% performance on my RX480. It produces
-		// the same result and I think it would look nicer, but for
-		// some reason I get the 13% performance drop. Weird.
-		//
-		// On my nVidia GTX 1070 I drop a miniscule amount of
-		// performance using the below order but that was rectified
-		// by introducing copy3 instead of reusing copy2, probably
-		// giving the compiler some sort of hint. Anyways. All good now.
-		mp_mul_mont(&copy1, &copy2, &copy1);
+		mp_mod_mul(&copy2, &copy1, &buffer[i - 1]);
+		pInverse[id + i] = copy2;
+		copy2 = pX[id + i];
+		mp_mod_mul(&copy1, &copy1, &copy2);
 	}
 
 	pInverse[id] = copy1;
@@ -497,70 +574,85 @@ __kernel void profanity_inverse_multiple(__global point * const pPoints, __globa
 // in hopes that using constant storage instead of private storage
 // will aid speeds.
 //
-// So, in summation, pPoints.x NEVER contains the x-coordinate, it
-// contains the delta (x - G_x) and this kernel performs an optimized
-// elliptic point addition adding the generator point G.
-__kernel void profanity_inverse_post(__global point * const pPoints, __global const mp_number * const pInverse) {
+// Just as we don't directly save the X coordinate but instead x - G_x
+// we also do the same for the Y coordinate. This doesn't lead to
+// any particular optimization or speed-up but is simply for consistensy.
+// 
+// There is a minor mathematical optimization I've figured out that would
+// save us from subtracting tripleNegativeGx on every other iteration by
+// saving an intermediary value, this global data access however resulted
+// in a net degradation in performance. I think any more optimizations
+// here will be hard.
+__kernel void profanity_inverse_post(__global mp_number * const pX, __global mp_number * const pY, __global const mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
 
-	point p = pPoints[id];
+	mp_number x = pX[id];
+	mp_number y = pY[id];
 	mp_number tmp = pInverse[id];
 
 	// λ = (y - G_Y) / (x - G_X)
-	// p.y := (p.y - G_Y) * pInverse[id] = λ
-	mp_mod_sub_gy(&p.y, &p.y);
-	mp_mul_mont(&p.y, &p.y, &tmp);
+	// y := y * pInverse[id]
+	mp_mod_mul(&y, &y, &tmp);
 
-	// λ² = λ * λ <=> tmp := tmp * tmp = λ²
-	mp_mul_mont(&tmp, &p.y, &p.y);
+	// λ² = λ * λ <=> tmp := y * y = λ²
+	mp_mod_mul(&tmp, &y, &y);
 
-	// d' = λ² - x - 3g = (-3g) - (d - λ²) <=> p.x := tripleNegativeGx - (p.x - tmp)
-	mp_mod_sub(&p.x, &p.x, &tmp);
-	mp_mod_sub_const(&p.x, &tripleNegativeGx, &p.x);
+	// d' = λ² - d - 3g = (-3g) - (d - λ²) <=> x := tripleNegativeGx - (x - tmp)
+	mp_mod_sub(&x, &x, &tmp);
+	mp_mod_sub_const(&x, &tripleNegativeGx, &x);
 
 	// y' = (-G_Y) - λ * d' <=> p.y := negativeGy - (p.y * p.x)
-	mp_mul_mont(&p.y, &p.y, &p.x);
-	mp_mod_sub_const(&p.y, &negativeGy, &p.y);
+	mp_mod_mul(&y, &y, &x);
+	mp_mod_sub_const(&y, &doubleNegativeGy, &y);
 
-	pPoints[id] = p;
+	pX[id] = x;
+	pY[id] = y;
 }
 
 // This kernel retrieves a point and calculates its public address. The
-// public address is stored in pInverse which is used only as interim
-// storage as its contents won't be needed anymore for this cycle.
+// public address is then stored in pInverse which is used only as interim
+// storage as it won't otherwise be used again this cycle.
 //
 // One of the scoring kernels will run after this and fetch the address
 // from pInverse.
-__kernel void profanity_end(__global point * const pPoints, __global mp_number * const pInverse) {
+__kernel void profanity_end(__global mp_number * const pX, __global mp_number * const pY, __global mp_number * const pInverse) {
 	const size_t id = get_global_id(0);
-	mp_number negativeGx = { {0xb781db98, 0x28c9d1a4, 0xd6439924, 0xdce1d6ac, 0xcc02ed63, 0x6860b73f, 0x16f760b7, 0x667e19bc} };
+
+	// negativeGx = 0x8641998106234453aa5f9d6a3178f4f8fd640324d231d726a60d7ea3e907e497
+	mp_number negativeGx = { {0xe907e497, 0xa60d7ea3, 0xd231d726, 0xfd640324, 0x3178f4f8, 0xaa5f9d6a, 0x06234453, 0x86419981 } };
+
+	// negativeGy = 0xb7c52588d95c3b9aa25b0403f1eef75702e84bb7597aabe663b82f6f04ef2777
+	mp_number negativeGy = { {0x04ef2777, 0x63b82f6f, 0x597aabe6, 0x02e84bb7, 0xf1eef757, 0xa25b0403, 0xd95c3b9a, 0xb7c52588 } };
 
 	ethhash h = { { 0 } };
-	point p = pPoints[id];
+	mp_number x = pX[id];
+	mp_number y = pY[id];
 
-	// Restore X coordinate by adding back G_x (subtracting negative G_x)
-	mp_mod_sub(&p.x, &p.x, &negativeGx);
+	// The values in pPoints are not the actual points. As a result of
+	// small optimizations instead the deltas p_x - G_x and p_y - G_Y
+	// are stored here. To retrieve the point we need to add G_x and G_y
+	// to the x and y values respectively. We do this by subtracting
+	// their negative values since I'd rather reuse mp_mod_sub than
+	// implement mp_mod_add.
+	mp_mod_sub(&x, &x, &negativeGx);
+	mp_mod_sub(&y, &y, &negativeGy);
 
-	// De-montgomerize by multiplying with one.
-	mp_mul_mont_one(&p.x, &p.x);
-	mp_mul_mont_one(&p.y, &p.y);
-
-	h.d[0] = bswap32(p.x.d[MP_WORDS - 1]);
-	h.d[1] = bswap32(p.x.d[MP_WORDS - 2]);
-	h.d[2] = bswap32(p.x.d[MP_WORDS - 3]);
-	h.d[3] = bswap32(p.x.d[MP_WORDS - 4]);
-	h.d[4] = bswap32(p.x.d[MP_WORDS - 5]);
-	h.d[5] = bswap32(p.x.d[MP_WORDS - 6]);
-	h.d[6] = bswap32(p.x.d[MP_WORDS - 7]);
-	h.d[7] = bswap32(p.x.d[MP_WORDS - 8]);
-	h.d[8] = bswap32(p.y.d[MP_WORDS - 1]);
-	h.d[9] = bswap32(p.y.d[MP_WORDS - 2]);
-	h.d[10] = bswap32(p.y.d[MP_WORDS - 3]);
-	h.d[11] = bswap32(p.y.d[MP_WORDS - 4]);
-	h.d[12] = bswap32(p.y.d[MP_WORDS - 5]);
-	h.d[13] = bswap32(p.y.d[MP_WORDS - 6]);
-	h.d[14] = bswap32(p.y.d[MP_WORDS - 7]);
-	h.d[15] = bswap32(p.y.d[MP_WORDS - 8]);
+	h.d[0] = bswap32(x.d[MP_WORDS - 1]);
+	h.d[1] = bswap32(x.d[MP_WORDS - 2]);
+	h.d[2] = bswap32(x.d[MP_WORDS - 3]);
+	h.d[3] = bswap32(x.d[MP_WORDS - 4]);
+	h.d[4] = bswap32(x.d[MP_WORDS - 5]);
+	h.d[5] = bswap32(x.d[MP_WORDS - 6]);
+	h.d[6] = bswap32(x.d[MP_WORDS - 7]);
+	h.d[7] = bswap32(x.d[MP_WORDS - 8]);
+	h.d[8] = bswap32(y.d[MP_WORDS - 1]);
+	h.d[9] = bswap32(y.d[MP_WORDS - 2]);
+	h.d[10] = bswap32(y.d[MP_WORDS - 3]);
+	h.d[11] = bswap32(y.d[MP_WORDS - 4]);
+	h.d[12] = bswap32(y.d[MP_WORDS - 5]);
+	h.d[13] = bswap32(y.d[MP_WORDS - 6]);
+	h.d[14] = bswap32(y.d[MP_WORDS - 7]);
+	h.d[15] = bswap32(y.d[MP_WORDS - 8]);
 	h.d[16] ^= 0x01; // length 64
 
 	sha3_keccakf(&h);

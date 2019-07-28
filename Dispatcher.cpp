@@ -55,6 +55,14 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	std::cout << ": 0x" << strPublic << std::endl;
 }
 
+unsigned int getKernelExecutionTimeMillis(cl_event & e) {
+	cl_ulong timeStart = 0, timeEnd = 0;
+	clWaitForEvents(1, &e);
+	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_START, sizeof(timeStart), &timeStart, NULL);
+	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_END, sizeof(timeEnd), &timeEnd, NULL);
+	return (timeEnd - timeStart) / 1000000;
+}
+
 Dispatcher::OpenCLException::OpenCLException(const std::string s, const cl_int res) :
 	std::runtime_error( s + " (res = " + toString(res) + ")"),
 	m_res(res)
@@ -70,10 +78,16 @@ void Dispatcher::OpenCLException::OpenCLException::throwIfError(const std::strin
 
 cl_command_queue Dispatcher::Device::createQueue(cl_context & clContext, cl_device_id & clDeviceId) {
 	// nVidia CUDA Toolkit 10.1 only supports OpenCL 1.2 so we revert back to older functions for compatability
-#ifdef CL_VERSION_2_0
-	const cl_command_queue ret = clCreateCommandQueueWithProperties(clContext, clDeviceId, NULL, NULL);
+#ifdef PROFANITY_DEBUG
+	cl_command_queue_properties p = CL_QUEUE_PROFILING_ENABLE;
 #else
-	const cl_command_queue ret = clCreateCommandQueue(clContext, clDeviceId, NULL, NULL);
+	cl_command_queue_properties p = NULL;
+#endif
+
+#ifdef CL_VERSION_2_0
+	const cl_command_queue ret = clCreateCommandQueueWithProperties(clContext, clDeviceId, &p, NULL);
+#else
+	const cl_command_queue ret = clCreateCommandQueue(clContext, clDeviceId, p, NULL);
 #endif
 	return ret == NULL ? throw std::runtime_error("failed to create command queue") : ret;
 }
@@ -120,7 +134,8 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_kernelTransform( mode.transformKernel() == "" ? NULL : createKernel(clProgram, mode.transformKernel())),
 	m_kernelScore(createKernel(clProgram, mode.kernel)),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
-	m_memPoints(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
+	m_memPointsX(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
+	m_memPointsY(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, PROFANITY_MAX_SCORE + 1),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
@@ -224,21 +239,24 @@ void Dispatcher::initBegin(Device & d) {
 
 	// Kernel arguments - profanity_begin
 	d.m_memPrecomp.setKernelArg(d.m_kernelBegin, 0);
-	d.m_memPoints.setKernelArg(d.m_kernelBegin, 1);
-	d.m_memResult.setKernelArg(d.m_kernelBegin, 2);
-	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 3, d.m_clSeed);
+	d.m_memPointsX.setKernelArg(d.m_kernelBegin, 1);
+	d.m_memPointsY.setKernelArg(d.m_kernelBegin, 2);
+	d.m_memResult.setKernelArg(d.m_kernelBegin, 3);
+	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 4, d.m_clSeed);
 
 	// Kernel arguments - profanity_inverse
-	d.m_memPoints.setKernelArg(d.m_kernelInverse, 0);
+	d.m_memPointsX.setKernelArg(d.m_kernelInverse, 0);
 	d.m_memInverse.setKernelArg(d.m_kernelInverse, 1);
 
 	// Kernel arguments - profanity_inverse_post
-	d.m_memPoints.setKernelArg(d.m_kernelInversePost, 0);
-	d.m_memInverse.setKernelArg(d.m_kernelInversePost, 1);
+	d.m_memPointsX.setKernelArg(d.m_kernelInversePost, 0);
+	d.m_memPointsY.setKernelArg(d.m_kernelInversePost, 1);
+	d.m_memInverse.setKernelArg(d.m_kernelInversePost, 2);
 
 	// Kernel arguments - profanity_end
-	d.m_memPoints.setKernelArg(d.m_kernelEnd, 0);
-	d.m_memInverse.setKernelArg(d.m_kernelEnd, 1);
+	d.m_memPointsX.setKernelArg(d.m_kernelEnd, 0);
+	d.m_memPointsY.setKernelArg(d.m_kernelEnd, 1);
+	d.m_memInverse.setKernelArg(d.m_kernelEnd, 2);
 
 	// Kernel arguments - profanity_transform_*
 	if(d.m_kernelTransform) {
@@ -286,37 +304,29 @@ void Dispatcher::initContinue(Device & d) {
 	}
 }
 
-void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, const bool bOneAtATime = false) {
+void Dispatcher::enqueueKernel(cl_command_queue & clQueue, cl_kernel & clKernel, size_t worksizeGlobal, const size_t worksizeLocal, cl_event * pEvent = NULL) {
 	const size_t worksizeMax = m_worksizeMax;
 	size_t worksizeOffset = 0;
-	cl_event clEvent;
 	while (worksizeGlobal) {
 		const size_t worksizeRun = std::min(worksizeGlobal, worksizeMax);
 		const size_t * const pWorksizeLocal = (worksizeLocal == 0 ? NULL : &worksizeLocal);
-		const auto res = clEnqueueNDRangeKernel(clQueue, clKernel, 1, &worksizeOffset, &worksizeRun, pWorksizeLocal, 0, NULL, bOneAtATime ? &clEvent : NULL);
+		const auto res = clEnqueueNDRangeKernel(clQueue, clKernel, 1, &worksizeOffset, &worksizeRun, pWorksizeLocal, 0, NULL, pEvent);
 		OpenCLException::throwIfError("kernel queueing failed", res);
-
-		// Queueing lots of work exhausted resources on my GTX 1070 during initialization. I don't really know why. Correlated with worksizeMax.
-		if (bOneAtATime) {
-			clWaitForEvents(1, &clEvent);
-			clReleaseEvent(clEvent);
-			clEvent = NULL;
-		}
 
 		worksizeGlobal -= worksizeRun;
 		worksizeOffset += worksizeRun;
 	}
 }
 
-void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, const bool bOneAtATime = false) {
+void Dispatcher::enqueueKernelDevice(Device & d, cl_kernel & clKernel, size_t worksizeGlobal, cl_event * pEvent = NULL) {
 	try {
-		enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal, bOneAtATime);
+		enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal, pEvent);
 	} catch ( OpenCLException & e ) {
 		// If local work size is invalid, abandon it and let implementation decide
 		if ((e.m_res == CL_INVALID_WORK_GROUP_SIZE || e.m_res == CL_INVALID_WORK_ITEM_SIZE) && d.m_worksizeLocal != 0) {
 			std::cout << std::endl << "warning: local work size abandoned on GPU" << d.m_index << std::endl;
 			d.m_worksizeLocal = 0;
-			enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal, bOneAtATime);
+			enqueueKernel(d.m_clQueue, clKernel, worksizeGlobal, d.m_worksizeLocal, pEvent);
 		}
 		else {
 			throw;
@@ -328,9 +338,19 @@ void Dispatcher::dispatch(Device & d) {
 	cl_event event;
 	d.m_memResult.read(false, &event);
 
+#ifdef PROFANITY_DEBUG
+	cl_event eventInverse;
+	cl_event eventInversePost;
+	cl_event eventEnd;
+
+	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize, &eventInverse);
+	enqueueKernelDevice(d, d.m_kernelInversePost, m_size, &eventInversePost);
+	enqueueKernelDevice(d, d.m_kernelEnd, m_size, &eventEnd);
+#else
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize);
 	enqueueKernelDevice(d, d.m_kernelInversePost, m_size);
 	enqueueKernelDevice(d, d.m_kernelEnd, m_size);
+#endif
 
 	if (d.m_kernelTransform) {
 		enqueueKernelDevice(d, d.m_kernelTransform, m_size);
@@ -338,6 +358,11 @@ void Dispatcher::dispatch(Device & d) {
 
 	enqueueKernelDevice(d, d.m_kernelScore, m_size);
 	clFlush(d.m_clQueue);
+
+#ifdef PROFANITY_DEBUG
+	clFinish(d.m_clQueue);
+	std::cout << getKernelExecutionTimeMillis(eventInverse) << ", " << getKernelExecutionTimeMillis(eventInversePost) << ", " << getKernelExecutionTimeMillis(eventEnd) << std::endl;
+#endif
 
 	const auto res = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
 	OpenCLException::throwIfError("failed to set custom callback", res);
