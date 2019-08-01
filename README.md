@@ -69,9 +69,9 @@ usage: ./profanity [OPTIONS]
 ### Benchmarks - Current version
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters
 |:-:|:-:|:-:|:-:|:-:|:-:|
-|GTX 1070 OC|1950|4450|NO|157.0 MH/s| ~27s
-|GTX 1070|1750|4000|NO|140.0 MH/s| ~30s
-|RX 480|1328|2000|YES|112.0 MH/s| ~38s
+|GTX 1070 OC|1950|4450|NO|179.0 MH/s| ~24s
+|GTX 1070|1750|4000|NO|163.0 MH/s| ~26s
+|RX 480|1328|2000|YES|120.0 MH/s| ~36s
 
 ### Benchmarks - Outdated versions
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters|Version
