@@ -49,17 +49,16 @@ class Dispatcher {
 			cl_uchar m_clScoreMax;
 			cl_command_queue m_clQueue;
 
-			cl_kernel m_kernelBegin;
+			cl_kernel m_kernelInit;
 			cl_kernel m_kernelInverse;
-			cl_kernel m_kernelInversePost;
-			cl_kernel m_kernelEnd;
+			cl_kernel m_kernelIterate;
 			cl_kernel m_kernelTransform;
 			cl_kernel m_kernelScore;
 
 			CLMemory<point> m_memPrecomp;
-			CLMemory<mp_number> m_memPointsX;
-			CLMemory<mp_number> m_memPointsY;
-			CLMemory<mp_number> m_memInverse;
+			CLMemory<mp_number> m_memPointsDeltaX;
+			CLMemory<mp_number> m_memInversedNegativeDoubleGy;
+			CLMemory<mp_number> m_memPrevLambda;
 			CLMemory<result> m_memResult;
 
 			// Data parameters used in some modes
@@ -125,6 +124,8 @@ class Dispatcher {
 		std::chrono::time_point<std::chrono::steady_clock> timeStart;
 		unsigned int m_countPrint;
 		unsigned int m_countRunning;
+		size_t m_sizeInitTotal;
+		size_t m_sizeInitDone;
 		bool m_quit;
 };
 

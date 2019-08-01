@@ -55,12 +55,12 @@ static void printResult(cl_ulong4 seed, cl_ulong round, result r, cl_uchar score
 	std::cout << ": 0x" << strPublic << std::endl;
 }
 
-unsigned int getKernelExecutionTimeMillis(cl_event & e) {
+unsigned int getKernelExecutionTimeMicros(cl_event & e) {
 	cl_ulong timeStart = 0, timeEnd = 0;
 	clWaitForEvents(1, &e);
 	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_START, sizeof(timeStart), &timeStart, NULL);
 	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_END, sizeof(timeEnd), &timeEnd, NULL);
-	return (timeEnd - timeStart) / 1000000;
+	return (timeEnd - timeStart) / 1000;
 }
 
 Dispatcher::OpenCLException::OpenCLException(const std::string s, const cl_int res) :
@@ -127,16 +127,15 @@ Dispatcher::Device::Device(Dispatcher & parent, cl_context & clContext, cl_progr
 	m_worksizeLocal(worksizeLocal),
 	m_clScoreMax(0),
 	m_clQueue(createQueue(clContext, clDeviceId) ),
-	m_kernelBegin( createKernel(clProgram, "profanity_begin") ),
-	m_kernelInverse(createKernel(clProgram, "profanity_inverse_multiple")),
-	m_kernelInversePost(createKernel(clProgram, "profanity_inverse_post")),
-	m_kernelEnd(createKernel(clProgram, "profanity_end")),
+	m_kernelInit( createKernel(clProgram, "profanity_init") ),
+	m_kernelInverse(createKernel(clProgram, "profanity_inverse")),
+	m_kernelIterate(createKernel(clProgram, "profanity_iterate")),
 	m_kernelTransform( mode.transformKernel() == "" ? NULL : createKernel(clProgram, mode.transformKernel())),
 	m_kernelScore(createKernel(clProgram, mode.kernel)),
 	m_memPrecomp(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, sizeof(g_precomp), g_precomp),
-	m_memPointsX(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
-	m_memPointsY(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
-	m_memInverse(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
+	m_memPointsDeltaX(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
+	m_memInversedNegativeDoubleGy(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
+	m_memPrevLambda(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, size, true),
 	m_memResult(clContext, m_clQueue, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, PROFANITY_MAX_SCORE + 1),
 	m_memData1(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
 	m_memData2(clContext, m_clQueue, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 20),
@@ -205,6 +204,8 @@ void Dispatcher::init() {
 	std::cout << std::endl;
 
 	const auto deviceCount = m_vDevices.size();
+	m_sizeInitTotal = m_size * deviceCount;
+	m_sizeInitDone = 0;
 
 	cl_event * const pInitEvents = new cl_event[deviceCount];
 
@@ -238,33 +239,28 @@ void Dispatcher::initBegin(Device & d) {
 	d.m_memData2.write(true);
 
 	// Kernel arguments - profanity_begin
-	d.m_memPrecomp.setKernelArg(d.m_kernelBegin, 0);
-	d.m_memPointsX.setKernelArg(d.m_kernelBegin, 1);
-	d.m_memPointsY.setKernelArg(d.m_kernelBegin, 2);
-	d.m_memResult.setKernelArg(d.m_kernelBegin, 3);
-	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelBegin, 4, d.m_clSeed);
+	d.m_memPrecomp.setKernelArg(d.m_kernelInit, 0);
+	d.m_memPointsDeltaX.setKernelArg(d.m_kernelInit, 1);
+	d.m_memPrevLambda.setKernelArg(d.m_kernelInit, 2);
+	d.m_memResult.setKernelArg(d.m_kernelInit, 3);
+	CLMemory<cl_ulong4>::setKernelArg(d.m_kernelInit, 4, d.m_clSeed);
 
 	// Kernel arguments - profanity_inverse
-	d.m_memPointsX.setKernelArg(d.m_kernelInverse, 0);
-	d.m_memInverse.setKernelArg(d.m_kernelInverse, 1);
+	d.m_memPointsDeltaX.setKernelArg(d.m_kernelInverse, 0);
+	d.m_memInversedNegativeDoubleGy.setKernelArg(d.m_kernelInverse, 1);
 
-	// Kernel arguments - profanity_inverse_post
-	d.m_memPointsX.setKernelArg(d.m_kernelInversePost, 0);
-	d.m_memPointsY.setKernelArg(d.m_kernelInversePost, 1);
-	d.m_memInverse.setKernelArg(d.m_kernelInversePost, 2);
-
-	// Kernel arguments - profanity_end
-	d.m_memPointsX.setKernelArg(d.m_kernelEnd, 0);
-	d.m_memPointsY.setKernelArg(d.m_kernelEnd, 1);
-	d.m_memInverse.setKernelArg(d.m_kernelEnd, 2);
+	// Kernel arguments - profanity_iterate
+	d.m_memPointsDeltaX.setKernelArg(d.m_kernelIterate, 0);
+	d.m_memInversedNegativeDoubleGy.setKernelArg(d.m_kernelIterate, 1);
+	d.m_memPrevLambda.setKernelArg(d.m_kernelIterate, 2);
 
 	// Kernel arguments - profanity_transform_*
 	if(d.m_kernelTransform) {
-		d.m_memInverse.setKernelArg(d.m_kernelTransform, 0);
+		d.m_memInversedNegativeDoubleGy.setKernelArg(d.m_kernelTransform, 0);
 	}
 
 	// Kernel arguments - profanity_score_*
-	d.m_memInverse.setKernelArg(d.m_kernelScore, 0);
+	d.m_memInversedNegativeDoubleGy.setKernelArg(d.m_kernelScore, 0);
 	d.m_memResult.setKernelArg(d.m_kernelScore, 1);
 	d.m_memData1.setKernelArg(d.m_kernelScore, 2);
 	d.m_memData2.setKernelArg(d.m_kernelScore, 3);
@@ -277,11 +273,16 @@ void Dispatcher::initBegin(Device & d) {
 
 void Dispatcher::initContinue(Device & d) {
 	size_t sizeLeft = m_size - d.m_sizeInitialized;
+	const size_t sizeInitLimit = m_size / 20;
+
+	// Print progress
+	const size_t percentDone = m_sizeInitDone * 100 / m_sizeInitTotal;
+	std::cout << "  " << percentDone << "%\r" << std::flush;
 
 	if (sizeLeft) {
 		cl_event event;
-		const size_t sizeRun = std::min(sizeLeft, m_worksizeMax);
-		const auto resEnqueue = clEnqueueNDRangeKernel(d.m_clQueue, d.m_kernelBegin, 1, &d.m_sizeInitialized, &sizeRun, NULL, 0, NULL, &event);
+		const size_t sizeRun = std::min(sizeInitLimit, std::min(sizeLeft, m_worksizeMax));
+		const auto resEnqueue = clEnqueueNDRangeKernel(d.m_clQueue, d.m_kernelInit, 1, &d.m_sizeInitialized, &sizeRun, NULL, 0, NULL, &event);
 		OpenCLException::throwIfError("kernel queueing failed during initilization", resEnqueue);
 
 		// See: https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/clSetEventCallback.html
@@ -292,7 +293,9 @@ void Dispatcher::initContinue(Device & d) {
 		// clFlush on the queue before returning or arrange for clFlush to be called later on another thread.
 		clFlush(d.m_clQueue); 
 
+		std::lock_guard<std::mutex> lock(m_mutex);
 		d.m_sizeInitialized += sizeRun;
+		m_sizeInitDone += sizeRun;
 
 		const auto resCallback = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
 		OpenCLException::throwIfError("failed to set custom callback during initialization", resCallback);
@@ -340,16 +343,13 @@ void Dispatcher::dispatch(Device & d) {
 
 #ifdef PROFANITY_DEBUG
 	cl_event eventInverse;
-	cl_event eventInversePost;
-	cl_event eventEnd;
+	cl_event eventIterate;
 
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize, &eventInverse);
-	enqueueKernelDevice(d, d.m_kernelInversePost, m_size, &eventInversePost);
-	enqueueKernelDevice(d, d.m_kernelEnd, m_size, &eventEnd);
+	enqueueKernelDevice(d, d.m_kernelIterate, m_size, &eventIterate);
 #else
 	enqueueKernelDevice(d, d.m_kernelInverse, m_size / m_inverseSize);
-	enqueueKernelDevice(d, d.m_kernelInversePost, m_size);
-	enqueueKernelDevice(d, d.m_kernelEnd, m_size);
+	enqueueKernelDevice(d, d.m_kernelIterate, m_size);
 #endif
 
 	if (d.m_kernelTransform) {
@@ -360,8 +360,11 @@ void Dispatcher::dispatch(Device & d) {
 	clFlush(d.m_clQueue);
 
 #ifdef PROFANITY_DEBUG
-	clFinish(d.m_clQueue);
-	std::cout << getKernelExecutionTimeMillis(eventInverse) << ", " << getKernelExecutionTimeMillis(eventInversePost) << ", " << getKernelExecutionTimeMillis(eventEnd) << std::endl;
+	// We're actually not allowed to call clFinish here because this function is ultimately asynchronously called by OpenCL.
+	// However, this happens to work on my computer and it's not really intended for release, just something to aid me in
+	// optimizations.
+	clFinish(d.m_clQueue); 
+	std::cout << "Timing: profanity_inverse = " << getKernelExecutionTimeMicros(eventInverse) << "us, profanity_iterate = " << getKernelExecutionTimeMicros(eventIterate) << "us" << std::endl;
 #endif
 
 	const auto res = clSetEventCallback(event, CL_COMPLETE, staticCallback, &d);
@@ -399,8 +402,8 @@ void Dispatcher::onEvent(cl_event event, cl_int status, Device & d) {
 	else if (d.m_eventFinished != NULL) {
 		initContinue(d);
 	} else {
-		handleResult(d);
 		++d.m_round;
+		handleResult(d);
 
 		bool bDispatch = true;
 		{

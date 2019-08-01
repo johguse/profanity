@@ -32,45 +32,12 @@
  *
  * Iteration
  * =========
- * An iteration consists of a call to:
- *   1. profanity_inverse_multiple
- *   2. profanity_inverse_post
- *   3. profanity_end
- *   4. Potential transformation kernel for contract mode
- *   5. One of the scoring kernels
  *
- * The most two important kernels are 1 and 2. After initialization the pointers
- * pX and pY point to the X and Y coordinates of a number of points. In other
- * words, point i is given by {pX[i], pY[i]}. These are points on the
- * elliptical curve used for Ethereum address generation: secp256k1.
- *
- * A private key is a point on this curve and its transformed in an
- * irreversible process to what we know as a public address. Since the process
- * is irreversible this program has to try private key after private key until
- * it finds the pattern the user is seeking. To move from one private key
- * to the next - that is to say from one point on the curve to the next - we
- * have to add the generator point to it.
- *
- * This is an elliptical point addition and it is performed in the second kernel,
- * profanity_inverse_post. The point addition requires the modular inverse of
- * a value, this inverse is calculated in profanity_inverse_multiple and saved
- * for a point in the area pointed to by pInverse. So the inverse necessary for
- * point i is saved in pInverse[i].
- *
- * The transformation from a point to a public address takes place in the
- * kernel profanity_end.
- *
- * As a result of optimization this program no longer directly stores the X and
- * Y value of a point on the curve in pPoints, instead the deltas X - G_x and
- * Y - G_y are saved and the actual X and Y coordinates are retrieved by
- * adding back G_x and G_y to the stored values. More information on this
- * optimization can be found in the extensive comments for the kernels themselves.
  *
  * TODO
  * ====
- *   * Experiment and see if an improved version of profanity_inverse_multiple
- *     that runs over all the points and thus only perform A SINGLE inversion
- *     is feasible. Preliminary testing shows a maximum speed-up by about 4%.
+ *   * Update comments to reflect new optimizations and structure
+ *
  */
 
 /* ------------------------------------------------------------------------ */
@@ -93,6 +60,10 @@ __constant const mp_number tripleNegativeGx = { {0xbb17b196, 0xf2287bec, 0x76958
 
 // doubleNegativeGy = 0x6f8a4b11b2b8773544b60807e3ddeeae05d0976eb2f557ccc7705edf09de52bf
 __constant const mp_number doubleNegativeGy = { {0x09de52bf, 0xc7705edf, 0xb2f557cc, 0x05d0976e, 0xe3ddeeae, 0x44b60807, 0xb2b87735, 0x6f8a4b11} };
+
+// negativeGy       = 0xb7c52588d95c3b9aa25b0403f1eef75702e84bb7597aabe663b82f6f04ef2777
+__constant const mp_number negativeGy       = { {0x04ef2777, 0x63b82f6f, 0x597aabe6, 0x02e84bb7, 0xf1eef757, 0xa25b0403, 0xd95c3b9a, 0xb7c52588 } };
+
 
 // Multiprecision subtraction. Underflow signalled via return value.
 mp_word mp_sub(mp_number * const r, const mp_number * const a, const mp_number * const b) {
@@ -343,7 +314,6 @@ void mp_mul_mod_word_sub(mp_number * const r, const mp_word w, const bool withMo
 // I have no idea, for the time being I'll leave it like this, also see the comments at the
 // beginning of this document under the title "Cutting corners".
 void mp_mod_mul(mp_number * const r, const mp_number * const X, const mp_number * const Y) {
-
 	mp_number Z = { {0} };
 	mp_word extraWord;
 
@@ -418,7 +388,7 @@ typedef struct {
 // Elliptical point addition
 // Does not handle points sharing X coordinate, this is a deliberate design choice.
 // For more information on this choice see the beginning of this file.
-void point_add(point * const p, point * const o) {
+void point_add(point * const r, point * const p, point * const o) {
 	mp_number tmp;
 	mp_number newX;
 	mp_number newY;
@@ -438,8 +408,8 @@ void point_add(point * const p, point * const o) {
 	mp_mod_mul(&newY, &newY, &tmp);
 	mp_mod_sub(&newY, &newY, &p->y);
 
-	p->x = newX;
-	p->y = newY;
+	r->x = newX;
+	r->y = newY;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -451,7 +421,7 @@ typedef struct {
 	uchar foundHash[20];
 } result;
 
-void profanity_begin_seed(__global const point * const precomp, point * const p, bool * const pIsFirst, const size_t precompOffset, const ulong seed) {
+void profanity_init_seed(__global const point * const precomp, point * const p, bool * const pIsFirst, const size_t precompOffset, const ulong seed) {
 	point o;
 
 	for (uchar i = 0; i < 8; ++i) {
@@ -465,27 +435,42 @@ void profanity_begin_seed(__global const point * const precomp, point * const p,
 				*pIsFirst = false;
 			}
 			else {
-				point_add(p, &o);
+				point_add(p, p, &o);
 			}
 		}
 	}
 }
 
-__kernel void profanity_begin(__global const point * const precomp, __global mp_number * const pX, __global mp_number * const pY, __global result * const pResult, const ulong4 seed) {
+__kernel void profanity_init(__global const point * const precomp, __global mp_number * const pDeltaX, __global mp_number * const pPrevLambda, __global result * const pResult, const ulong4 seed) {
 	const size_t id = get_global_id(0);
 	point p;
 	bool bIsFirst = true;
 
-	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 0, seed.x);
-	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 1, seed.y);
-	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 2, seed.z);
-	profanity_begin_seed(precomp, &p, &bIsFirst, 8 * 255 * 3, seed.w + id);
+	mp_number tmp1, tmp2;
+	point tmp3;
 
+	// Calculate G^k where k = seed.wzyx (in other words, find the point indicated by the private key represented in seed)
+	profanity_init_seed(precomp, &p, &bIsFirst, 8 * 255 * 0, seed.x);
+	profanity_init_seed(precomp, &p, &bIsFirst, 8 * 255 * 1, seed.y);
+	profanity_init_seed(precomp, &p, &bIsFirst, 8 * 255 * 2, seed.z);
+	profanity_init_seed(precomp, &p, &bIsFirst, 8 * 255 * 3, seed.w + id);
+
+	// Calculate current lambda in this point
+	mp_mod_sub_gx(&tmp1, &p.x);
+	mp_mod_inverse(&tmp1);
+
+	mp_mod_sub_gy(&tmp2, &p.y); 
+	mp_mod_mul(&tmp1, &tmp1, &tmp2);
+
+	// Jump to next point (precomp[0] is the generator point G)
+	tmp3 = precomp[0];
+	point_add(&p, &tmp3, &p);
+
+	// pDeltaX should contain the delta (x - G_x)
 	mp_mod_sub_gx(&p.x, &p.x);
-	mp_mod_sub_gy(&p.y, &p.y);
 
-	pX[id] = p.x;
-	pY[id] = p.y;
+	pDeltaX[id] = p.x;
+	pPrevLambda[id] = tmp1;
 
 	for (uchar i = 0; i < PROFANITY_MAX_SCORE + 1; ++i) {
 		pResult[i].found = 0;
@@ -499,27 +484,40 @@ __kernel void profanity_begin(__global const point * const precomp, __global mp_
 // My RX 480 is very sensitive to changes in the second loop and sometimes I have
 // to make seemingly non-functional changes to the code to make the compiler
 // generate the most optimized version.
-__kernel void profanity_inverse_multiple(__global mp_number * const pX, __global mp_number * const pInverse) {
+__kernel void profanity_inverse(__global const mp_number * const pDeltaX, __global mp_number * const pInverse) {
 	const size_t id = get_global_id(0) * PROFANITY_INVERSE_SIZE;
+
+	// negativeDoubleGy = 0x6f8a4b11b2b8773544b60807e3ddeeae05d0976eb2f557ccc7705edf09de52bf
+	mp_number negativeDoubleGy = { {0x09de52bf, 0xc7705edf, 0xb2f557cc, 0x05d0976e, 0xe3ddeeae, 0x44b60807, 0xb2b87735, 0x6f8a4b11 } };
 
 	mp_number copy1, copy2;
 	mp_number buffer[PROFANITY_INVERSE_SIZE];
+	mp_number buffer2[PROFANITY_INVERSE_SIZE];
 
-	buffer[0] = pX[id];
-
+	// We initialize buffer and buffer2 such that:
+	// buffer[i] = pDeltaX[id] * pDeltaX[id + 1] * pDeltaX[id + 2] * ... * pDeltaX[id + i]
+	// buffer2[i] = pDeltaX[id + i]
+	buffer[0] = pDeltaX[id];
 	for (uint i = 1; i < PROFANITY_INVERSE_SIZE; ++i) {
-		buffer[i] = pX[id + i];
-		mp_mod_mul(&buffer[i], &buffer[i], &buffer[i - 1]);
+		buffer2[i] = pDeltaX[id + i];
+		mp_mod_mul(&buffer[i], &buffer2[i], &buffer[i - 1]);
 	}
 
+	// Take the inverse of all x-values combined
 	copy1 = buffer[PROFANITY_INVERSE_SIZE - 1];
 	mp_mod_inverse(&copy1);
 
+	// We multiply in -2G_y together with the inverse so that we have:
+	//            - 2 * G_y
+	//  ----------------------------
+	//  x_0 * x_1 * x_2 * x_3 * ...
+	mp_mod_mul(&copy1, &copy1, &negativeDoubleGy);
+
+	// Multiply out each individual inverse using the buffers
 	for (uint i = PROFANITY_INVERSE_SIZE - 1; i > 0; --i) {
 		mp_mod_mul(&copy2, &copy1, &buffer[i - 1]);
+		mp_mod_mul(&copy1, &copy1, &buffer2[i]);
 		pInverse[id + i] = copy2;
-		copy2 = pX[id + i];
-		mp_mod_mul(&copy1, &copy1, &copy2);
 	}
 
 	pInverse[id] = copy1;
@@ -537,7 +535,7 @@ __kernel void profanity_inverse_multiple(__global mp_number * const pX, __global
 // profanity_end to retrieve the actual x-coordinate instead of the
 // delta as that's what used for calculating the public hash.
 //
-// The optimization comes when calculating the next y-coordinate. As
+// One optimization is when calculating the next y-coordinate. As
 // given in the wiki the next y-coordinate is given by:
 //   y_r = λ²(x_p - x_r) - y_p
 // In our case the other point P is the generator point so x_p = G_x,
@@ -569,94 +567,93 @@ __kernel void profanity_inverse_multiple(__global mp_number * const pX, __global
 // We can just precalculate the constant -G_y and we get rid of one
 // subtraction. Woo!
 //
+// But we aren't done yet! Let's expand the expression for the next
+// lambda, λ'. We have:
+//   λ' = (y' - G_y) / d'
+//      = (-λ * d' - G_y - G_y) / d' 
+//      = (-λ * d' - 2*G_y) / d' 
+//      = -λ - 2*G_y / d' 
+//
+// So the next lambda value can be calculated from the old one. This in
+// and of itself is not so interesting but the fact that the term -2 * G_y
+// is a constant is! Since it's constant it'll be the same value no matter
+// which point we're currently working with. This means that this factor
+// can be multiplied in during the inversion, and just with one call per
+// inversion instead of one call per point! This is small enough to be
+// negligible and thus we've reduced our point addition from three
+// multi-precision multiplications to just two! Wow. Just wow.
+//
+// There is additional overhead introduced by storing the previous lambda
+// but it's still a net gain. To additionally decrease memory access
+// overhead I never any longer store the Y coordinate. Instead I
+// calculate it at the end directly from the lambda and deltaX.
+// 
 // In addition to this some algebraic re-ordering has been done to move
 // constants into the same argument to a new function mp_mod_sub_const
 // in hopes that using constant storage instead of private storage
 // will aid speeds.
 //
-// Just as we don't directly save the X coordinate but instead x - G_x
-// we also do the same for the Y coordinate. This doesn't lead to
-// any particular optimization or speed-up but is simply for consistensy.
-// 
-// There is a minor mathematical optimization I've figured out that would
-// save us from subtracting tripleNegativeGx on every other iteration by
-// saving an intermediary value, this global data access however resulted
-// in a net degradation in performance. I think any more optimizations
-// here will be hard.
-__kernel void profanity_inverse_post(__global mp_number * const pX, __global mp_number * const pY, __global const mp_number * const pInverse) {
-	const size_t id = get_global_id(0);
-
-	mp_number x = pX[id];
-	mp_number y = pY[id];
-	mp_number tmp = pInverse[id];
-
-	// λ = (y - G_Y) / (x - G_X)
-	// y := y * pInverse[id]
-	mp_mod_mul(&y, &y, &tmp);
-
-	// λ² = λ * λ <=> tmp := y * y = λ²
-	mp_mod_mul(&tmp, &y, &y);
-
-	// d' = λ² - d - 3g = (-3g) - (d - λ²) <=> x := tripleNegativeGx - (x - tmp)
-	mp_mod_sub(&x, &x, &tmp);
-	mp_mod_sub_const(&x, &tripleNegativeGx, &x);
-
-	// y' = (-G_Y) - λ * d' <=> p.y := negativeGy - (p.y * p.x)
-	mp_mod_mul(&y, &y, &x);
-	mp_mod_sub_const(&y, &doubleNegativeGy, &y);
-
-	pX[id] = x;
-	pY[id] = y;
-}
-
-// This kernel retrieves a point and calculates its public address. The
-// public address is then stored in pInverse which is used only as interim
-// storage as it won't otherwise be used again this cycle.
+// After the above point addition this kernel calculates the public address
+// corresponding to the point and stores it in pInverse which is used only
+// as interim storage as it won't otherwise be used again this cycle.
 //
 // One of the scoring kernels will run after this and fetch the address
 // from pInverse.
-__kernel void profanity_end(__global mp_number * const pX, __global mp_number * const pY, __global mp_number * const pInverse) {
+__kernel void profanity_iterate(__global mp_number * const pDeltaX, __global mp_number * const pInverse, __global mp_number * const pPrevLambda) {
 	const size_t id = get_global_id(0);
 
 	// negativeGx = 0x8641998106234453aa5f9d6a3178f4f8fd640324d231d726a60d7ea3e907e497
 	mp_number negativeGx = { {0xe907e497, 0xa60d7ea3, 0xd231d726, 0xfd640324, 0x3178f4f8, 0xaa5f9d6a, 0x06234453, 0x86419981 } };
 
-	// negativeGy = 0xb7c52588d95c3b9aa25b0403f1eef75702e84bb7597aabe663b82f6f04ef2777
-	mp_number negativeGy = { {0x04ef2777, 0x63b82f6f, 0x597aabe6, 0x02e84bb7, 0xf1eef757, 0xa25b0403, 0xd95c3b9a, 0xb7c52588 } };
-
 	ethhash h = { { 0 } };
-	mp_number x = pX[id];
-	mp_number y = pY[id];
 
-	// The values in pPoints are not the actual points. As a result of
-	// small optimizations instead the deltas p_x - G_x and p_y - G_Y
-	// are stored here. To retrieve the point we need to add G_x and G_y
-	// to the x and y values respectively. We do this by subtracting
-	// their negative values since I'd rather reuse mp_mod_sub than
-	// implement mp_mod_add.
-	mp_mod_sub(&x, &x, &negativeGx);
-	mp_mod_sub(&y, &y, &negativeGy);
+	mp_number dX = pDeltaX[id];
+	mp_number tmp = pInverse[id];
+	mp_number lambda = pPrevLambda[id];
 
-	h.d[0] = bswap32(x.d[MP_WORDS - 1]);
-	h.d[1] = bswap32(x.d[MP_WORDS - 2]);
-	h.d[2] = bswap32(x.d[MP_WORDS - 3]);
-	h.d[3] = bswap32(x.d[MP_WORDS - 4]);
-	h.d[4] = bswap32(x.d[MP_WORDS - 5]);
-	h.d[5] = bswap32(x.d[MP_WORDS - 6]);
-	h.d[6] = bswap32(x.d[MP_WORDS - 7]);
-	h.d[7] = bswap32(x.d[MP_WORDS - 8]);
-	h.d[8] = bswap32(y.d[MP_WORDS - 1]);
-	h.d[9] = bswap32(y.d[MP_WORDS - 2]);
-	h.d[10] = bswap32(y.d[MP_WORDS - 3]);
-	h.d[11] = bswap32(y.d[MP_WORDS - 4]);
-	h.d[12] = bswap32(y.d[MP_WORDS - 5]);
-	h.d[13] = bswap32(y.d[MP_WORDS - 6]);
-	h.d[14] = bswap32(y.d[MP_WORDS - 7]);
-	h.d[15] = bswap32(y.d[MP_WORDS - 8]);
+	// λ' = - (2G_y) / d' - λ <=> lambda := pInversedNegativeDoubleGy[id] - pPrevLambda[id]
+	mp_mod_sub(&lambda, &tmp, &lambda);
+
+	// λ² = λ * λ <=> tmp := lambda * lambda = λ²
+	mp_mod_mul(&tmp, &lambda, &lambda);
+
+	// d' = λ² - d - 3g = (-3g) - (d - λ²) <=> x := tripleNegativeGx - (x - tmp)
+	mp_mod_sub(&dX, &dX, &tmp);
+	mp_mod_sub_const(&dX, &tripleNegativeGx, &dX);
+
+	pDeltaX[id] = dX;
+	pPrevLambda[id] = lambda;
+
+	// Calculate y from dX and lambda
+	// y' = (-G_Y) - λ * d' <=> p.y := negativeGy - (p.y * p.x)
+	mp_mod_mul(&tmp, &lambda, &dX);
+	mp_mod_sub_const(&tmp, &negativeGy, &tmp);
+
+	// Restore X coordinate from delta value
+	mp_mod_sub(&dX, &dX, &negativeGx);
+
+	// Initialize Keccak structure with point coordinates in big endian
+	h.d[0] = bswap32(dX.d[MP_WORDS - 1]);
+	h.d[1] = bswap32(dX.d[MP_WORDS - 2]);
+	h.d[2] = bswap32(dX.d[MP_WORDS - 3]);
+	h.d[3] = bswap32(dX.d[MP_WORDS - 4]);
+	h.d[4] = bswap32(dX.d[MP_WORDS - 5]);
+	h.d[5] = bswap32(dX.d[MP_WORDS - 6]);
+	h.d[6] = bswap32(dX.d[MP_WORDS - 7]);
+	h.d[7] = bswap32(dX.d[MP_WORDS - 8]);
+	h.d[8] = bswap32(tmp.d[MP_WORDS - 1]);
+	h.d[9] = bswap32(tmp.d[MP_WORDS - 2]);
+	h.d[10] = bswap32(tmp.d[MP_WORDS - 3]);
+	h.d[11] = bswap32(tmp.d[MP_WORDS - 4]);
+	h.d[12] = bswap32(tmp.d[MP_WORDS - 5]);
+	h.d[13] = bswap32(tmp.d[MP_WORDS - 6]);
+	h.d[14] = bswap32(tmp.d[MP_WORDS - 7]);
+	h.d[15] = bswap32(tmp.d[MP_WORDS - 8]);
 	h.d[16] ^= 0x01; // length 64
 
 	sha3_keccakf(&h);
 
+	// Save public address hash in pInverse, only used as interim storage until next cycle
 	pInverse[id].d[0] = h.d[3];
 	pInverse[id].d[1] = h.d[4];
 	pInverse[id].d[2] = h.d[5];
