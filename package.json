@@ -17,6 +17,7 @@
   },
   "homepage": "https://github.com/gkucmierz/profanity#readme",
   "devDependencies": {
+    "beepbeep": "^1.3.0",
     "ethereum-checksum-address": "0.0.6"
   }
 }
