@@ -1,5 +1,8 @@
 
-const PHRASE = 'beef';
+const {
+  PHRASE
+} = require('dotenv').config();
+
 const CMD = `./profanity.x64 --contract --skip 1 --matching ${PHRASE} -I 1000 -i 255`;
 
 const exec = require('child_process').exec;

@@ -57,3 +57,4 @@ cache-opencl**
 precomp.o
 profanity.o
 profanity.x64
+.env
