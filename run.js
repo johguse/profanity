@@ -5,7 +5,7 @@ const {
 } = PARSED;
 const CONTRACT = PARSED.CONTRACT === 'true';
 
-const CMD = `./profanity.x64 ${CONTRACT ? '--contract' : ''} --skip 1 --matching ${PHRASE} -I 1000 -i 255`;
+const CMD = `./profanity.x64 ${CONTRACT ? '--contract' : ''} --skip 1 --matching ${PHRASE} -I 200 -i 255`;
 console.log(CMD);
 
 const exec = require('child_process').exec;
@@ -19,12 +19,19 @@ const loop = () => {
   const beep = require('beepbeep');
 
   const check = (priv, addr) => {
-    console.log(`check: ${addr}`);
-    if (addr.indexOf(PHRASE) !== -1) {
-      fs.appendFileSync('output.txt', [toChecksumAddress(addr), priv, CONTRACT].join('\t') + '\n');
+    const checksum = toChecksumAddress(addr);
+    console.log(`checksum: ${checksum}`);
+    if (addr.indexOf(PHRASE.toLowerCase()) !== -1) {
+      const some = [PHRASE, PHRASE.toLowerCase(), PHRASE.toUpperCase()].some(s => checksum.indexOf(s) !== -1);
+      if (some) {
+        const type = CONTRACT ? 'contract' : 'address';
+        fs.appendFileSync('output.txt', [checksum, priv, type].join('\t') + '\n');
+        beep();
+      }
       beep();
+      console.log('restart');
       proc.kill();
-      loop();
+      setTimeout(loop, 1);
     }
   };
 
