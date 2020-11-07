@@ -1,0 +1,24 @@
+{
+  "name": "profanity",
+  "version": "1.0.0",
+  "description": "Profanity is a high performance (probably the fastest!) vanity address generator for Ethereum. Create cool customized addresses that you never realized you needed! Recieve Ether in style! Wow!",
+  "main": "run.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gkucmierz/profanity.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/gkucmierz/profanity/issues"
+  },
+  "homepage": "https://github.com/gkucmierz/profanity#readme",
+  "devDependencies": {
+    "beepbeep": "^1.3.0",
+    "dotenv": "^8.2.0",
+    "ethereum-checksum-address": "0.0.6"
+  }
+}
