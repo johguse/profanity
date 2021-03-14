@@ -72,6 +72,7 @@ usage: ./profanity [OPTIONS]
 |GTX 1070 OC|1950|4450|NO|179.0 MH/s| ~24s
 |GTX 1070|1750|4000|NO|163.0 MH/s| ~26s
 |RX 480|1328|2000|YES|120.0 MH/s| ~36s
+|RTX 3070|1900|7900|NO|410.0 MH/s| ~12s
 
 ### Benchmarks - Outdated versions
 |Model|Clock Speed|Memory Speed|Modified straps|Speed|Time to match eight characters|Version
