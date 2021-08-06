@@ -6,7 +6,9 @@ Profanity is a high performance (probably the fastest!) vanity address generator
 ### Releases
 Latest release compiled for 64-bit Windows & Linux can be found [here](https://github.com/johguse/profanity/releases).
 
+
 ### Update 
+[Google Colab](https://colab.research.google.com/github/geeks121/profanity-google-colab/blob/master/profanity.ipynb)
 work for google colab #by geeks121
 limited with 3 Private key list, otherwise the colab didn't respond.
 the result is 10 second for leading by zero with 3 address.
