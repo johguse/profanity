@@ -753,11 +753,9 @@ __kernel void profanity_score_gas(__global mp_number * const pInverse, __global 
 	__global const uchar * const hash = pInverse[id].d;
 	int score = 0;
 
-	if (pInverse[id].d[0] == 0) {
-		score = 4;
-		for (int i = 4; i < 20; ++i) {
-			score += (hash[i] == 0);
-		}
+	for (int i = 0; i < 20; ++i) {
+		if (hash[i] == 0x00) {
+			++score;
 	}
 
 	profanity_result_update(id, hash, pResult, score, scoreMax);
