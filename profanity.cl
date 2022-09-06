@@ -756,6 +756,7 @@ __kernel void profanity_score_gas(__global mp_number * const pInverse, __global 
 	for (int i = 0; i < 20; ++i) {
 		if (hash[i] == 0x00) {
 			++score;
+                }
 	}
 
 	profanity_result_update(id, hash, pResult, score, scoreMax);
