@@ -75,6 +75,13 @@ Mode Mode::leading(const char charLeading) {
 	return r;
 }
 
+Mode Mode::gas() {
+	Mode r;
+	r.name = "gas";
+	r.kernel = "profanity_score_gas";
+	return r;
+}
+
 Mode Mode::range(const cl_uchar min, const cl_uchar max) {
 	Mode r;
 	r.name = "range";

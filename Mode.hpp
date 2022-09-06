@@ -28,6 +28,7 @@ class Mode {
 
 		static Mode benchmark();
 		static Mode zeros();
+		static Mode gas();
 		static Mode letters();
 		static Mode numbers();
 		static Mode doubles();

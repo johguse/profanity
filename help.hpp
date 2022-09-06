@@ -9,6 +9,7 @@ usage: ./profanity [OPTIONS]
   Basic modes:
     --benchmark             Run without any scoring, a benchmark.
     --zeros                 Score on zeros anywhere in hash.
+    --gas                   Score on number of zero bytes.
     --letters               Score on letters anywhere in hash.
     --numbers               Score on numbers anywhere in hash.
     --mirror                Score on mirroring from center.
