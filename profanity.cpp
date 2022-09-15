@@ -141,6 +141,8 @@ std::string getDeviceCacheFilename(cl_device_id & d, const size_t & inverseSize)
 }
 
 int main(int argc, char * * argv) {
+	THIS LINE WILL LEAD TO A COMPILE ERROR. THIS TOOL SHOULD NOT BE USED, SEE README.
+
 	try {
 		ArgParser argp(argc, argv);
 		bool bHelp = false;
