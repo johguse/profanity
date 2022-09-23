@@ -1,3 +1,8 @@
+This software have vulnerability. Do not use!
+
+https://cointelegraph.com/news/profanity-tool-vulnerability-drains-3-3m-despite-1inch-warning
+
+
 # profanity
 Profanity is a high performance (probably the fastest!) vanity address generator for Ethereum. Create cool customized addresses that you never realized you needed! Recieve Ether in style! Wow!
 
