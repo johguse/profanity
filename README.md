@@ -1,3 +1,8 @@
+This software have vulnerability. Do not use!
+
+https://cointelegraph.com/news/profanity-tool-vulnerability-drains-3-3m-despite-1inch-warning
+
+
 # profanity
 This project was abandoned by me a couple of years ago. Fundamental security issues in the generation of private keys have been brought to my attention. See: https://github.com/johguse/profanity/issues/61
 
